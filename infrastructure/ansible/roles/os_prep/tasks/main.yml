@@ -1,0 +1,46 @@
+---
+- name: Installation des paquets requis pour K3s, Cilium et Piraeus/LINSTOR (DRBD 9)
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - lvm2
+      - thin-provisioning-tools
+      - iptables
+      - iproute2
+      - bind9-dnsutils
+      - iputils-ping
+    state: present
+    update_cache: true
+
+- name: Vérification que le module noyau DRBD 9 de l'hôte est visible dans le conteneur (Fail-Fast)
+  ansible.builtin.command:
+    argv:
+      - grep
+      - "version: 9."
+      - /proc/drbd
+  changed_when: false
+
+- name: Montage du système de fichiers eBPF (requis par Cilium dans un conteneur LXC)
+  ansible.posix.mount:
+    path: /sys/fs/bpf
+    src: bpffs
+    fstype: bpf
+    opts: rw,nosuid,nodev,noexec,relatime,mode=700
+    state: mounted
+
+- name: Configuration du routage IPv4 dans le conteneur pour Kubernetes
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: Configuration du routage IPv6 dans le conteneur pour Kubernetes (désactivation)
+  ansible.posix.sysctl:
+    name: net.ipv6.conf.all.disable_ipv6
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true

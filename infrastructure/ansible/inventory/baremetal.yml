@@ -1,0 +1,16 @@
+---
+baremetal_hosts:
+  hosts:
+    hote-intel-1:
+      ansible_host: 172.16.17.240
+      incus_trust_name: terraform-pc1
+    hote-intel-2:
+      ansible_host: 172.16.17.241
+      incus_trust_name: terraform-pc2
+    hote-intel-3:
+      ansible_host: 172.16.17.242
+      incus_trust_name: terraform-pc3
+  vars:
+    ansible_user: ansible # <-- Remplacez par votre nom d'utilisateur sur les PC physiques
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519_homelab
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'

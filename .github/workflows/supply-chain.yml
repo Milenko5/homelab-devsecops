@@ -1,0 +1,111 @@
+name: Supply Chain - Build, SBOM (Syft), Scan (Grype) & Sign (Cosign)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "Nom de l'application à compiler et signer"
+        required: true
+        default: "demo-app"
+        type: string
+      app_context:
+        description: "Chemin contenant le Dockerfile de l'application"
+        required: true
+        default: "cluster/apps/demo-app/src"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "cluster/apps/**/src/**"
+
+env:
+  REGISTRY: ghcr.io
+  SYFT_VERSION: "1.56.0"
+  GRYPE_VERSION: "0.121.1"
+
+# Permissions strictes requises pour GHCR et l'identité OIDC Sigstore
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  secure-supply-chain:
+    name: "Build → Syft SBOM → Grype Scan → Cosign Keyless"
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: ${{ inputs.app_name || 'demo-app' }}
+      APP_CONTEXT: ${{ inputs.app_context || 'cluster/apps/demo-app/src' }}
+
+    steps:
+      - name: 1. Récupération du code source
+        uses: actions/checkout@v4
+
+      - name: 2. Initialisation de Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 3. Connexion au registre GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 4. Extraction des métadonnées OCI
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 5. Construction et publication de l'image
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.APP_CONTEXT }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 6. Installation et vérification SHA-256 des binaires Anchore Syft et Grype (Hard-Fail)
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt"
+          sha256sum -c --ignore-missing "syft_${SYFT_VERSION}_checksums.txt"
+          sudo tar -xzv -C /usr/local/bin syft -f "syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+
+          curl -fsSLO "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_checksums.txt"
+          sha256sum -c --ignore-missing "grype_${GRYPE_VERSION}_checksums.txt"
+          sudo tar -xzv -C /usr/local/bin grype -f "grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          rm -f *.tar.gz *_checksums.txt
+
+      - name: 7. Génération de la nomenclature logicielle (SBOM SPDX) avec Syft
+        run: |
+          IMAGE_URI="${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          syft "${IMAGE_URI}" -o spdx-json=sbom.spdx.json
+
+      - name: 8. Barrière de sécurité CVE sur le SBOM avec Grype (Fail-Fast)
+        run: |
+          # Analyse hors-ligne du SBOM : coupe le pipeline (exit 1) si une CVE critique corrigée est détectée
+          grype sbom:./sbom.spdx.json --only-fixed --fail-on critical
+
+      - name: 9. Installation de Sigstore Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: 10. Signature Keyless (OIDC) et Attestation SBOM
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          IMAGE_URI="${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+
+          echo "Signature cryptographique de l'image via Fulcio & Rekor..."
+          cosign sign --yes "${IMAGE_URI}"
+
+          echo "Attachement de l'attestation SBOM Syft signée à l'image..."
+          cosign attest --yes --predicate sbom.spdx.json --type spdxjson "${IMAGE_URI}"

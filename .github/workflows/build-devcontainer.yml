@@ -1,0 +1,85 @@
+name: Build & Sign DevContainer Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag de l'image Docker à publier"
+        required: true
+        default: "latest"
+        type: string
+      run_grype_scan:
+        description: "Exécuter l'analyse de vulnérabilités Anchore Grype (Shift-Left)"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/devcontainer
+  GRYPE_VERSION: "0.121.1"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  build-and-push:
+    name: Build, Scan (Grype) & Push to GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Récupération du code source (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 2. Initialisation de Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 3. Authentification auprès de GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 4. Génération des métadonnées et des tags OCI
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ inputs.image_tag }}
+            type=sha,prefix=sha-
+
+      - name: 5. Construction et publication de l'image Docker
+        id: build-and-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .devcontainer
+          file: .devcontainer/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 6. Analyse de vulnérabilités avec Anchore Grype vérifié par SHA-256 (Hard-Fail)
+        if: ${{ inputs.run_grype_scan }}
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_checksums.txt"
+          sha256sum -c --ignore-missing "grype_${GRYPE_VERSION}_checksums.txt"
+          sudo tar -xzv -C /usr/local/bin grype -f "grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          rm -f *.tar.gz *_checksums.txt
+          grype "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" --only-fixed
+
+      - name: 7. Installation de Sigstore Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: 8. Signature cryptographique Keyless (OIDC) de l'image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build-and-push.outputs.digest }}"

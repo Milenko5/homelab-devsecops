@@ -1,0 +1,364 @@
+---
+# =============================================================================
+# 1. MISES À JOUR SYSTÈME UBUNTU 26.04 LTS (Exécutable isolément via --tags update)
+# =============================================================================
+- name: Mise à jour du cache APT et mise à niveau complète des paquets (dist-upgrade)
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+    cache_valid_time: 3600
+  tags: [update, incus]
+
+- name: Suppression des paquets obsolètes et nettoyage du cache APT
+  ansible.builtin.apt:
+    autoremove: true
+    autoclean: true
+  tags: [update]
+
+- name: Vérification si un redémarrage du serveur physique est requis (ex. mise à jour noyau)
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: etat_redemarrage_requis
+  tags: [update]
+
+- name: Redémarrage contrôlé du serveur physique si nécessaire
+  ansible.builtin.reboot:
+    msg: "Redémarrage orchestré par Ansible suite à une mise à jour du noyau Ubuntu"
+    connect_timeout: 5
+    reboot_timeout: 300
+    pre_reboot_delay: 0
+    post_reboot_delay: 15
+    test_command: uptime
+  when: etat_redemarrage_requis.stat.exists
+  tags: [update]
+
+# =============================================================================
+# 2. PRÉPARATION DU NOYAU HÔTE (SWAP, DRBD 9, MODULES & SYSCTL)
+# =============================================================================
+- name: Installation des utilitaires système requis sur l'hôte
+  ansible.builtin.apt:
+    name:
+      - curl
+      - gpg
+      - ca-certificates
+      - bridge-utils
+      - util-linux-extra
+      - unattended-upgrades
+      - lvm2
+      - thin-provisioning-tools
+      - bind9-dnsutils
+      - iputils-ping
+      - netcat-openbsd
+    state: present
+  tags: [os, incus, drbd]
+
+- name: Forcer APT à utiliser IPv4 pour éviter les délais d'attente (timeouts) IPv6
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/99-force-ipv4
+    mode: "0644"
+    content: |
+      Acquire::ForceIPv4 "true";
+  tags: [os, update, incus, drbd]
+
+- name: Création du répertoire de clés APT (/etc/apt/keyrings)
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  tags: [os, incus, drbd]
+
+- name: Nettoyage d'une éventuelle ancienne source PPA LINBIT non-Deb822
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/apt/sources.list.d/linbit-ubuntu-linbit-drbd9-stack-{{ ansible_facts['distribution_release'] }}.list
+    - /etc/apt/sources.list.d/linbit-ubuntu-linbit-drbd9-stack-{{ ansible_facts['distribution_release'] }}.sources
+  tags: [os, drbd]
+
+- name: Vérification si la clé publique GPG du PPA LINBIT est déjà présente
+  ansible.builtin.stat:
+    path: /etc/apt/keyrings/linbit-drbd9-ppa.asc
+  register: cle_linbit_stat
+  tags: [os, drbd]
+
+- name: Téléchargement de la clé publique GPG officielle du PPA LINBIT via IPv4 (Launchpad)
+  ansible.builtin.command:
+    argv:
+      - curl
+      - "-4"
+      - "-fsSL"
+      - "--retry"
+      - "3"
+      - "--connect-timeout"
+      - "15"
+      - "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xCC1B5A793C04BB3905AD837734893610CEAA9512"
+      - "-o"
+      - "/etc/apt/keyrings/linbit-drbd9-ppa.asc"
+  when: not cle_linbit_stat.stat.exists or cle_linbit_stat.stat.size == 0
+  throttle: 1
+  changed_when: true
+  tags: [os, drbd]
+
+- name: Permissions strictes (0644) sur la clé GPG LINBIT
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/linbit-drbd9-ppa.asc
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [os, drbd]
+
+- name: Vérification de l'empreinte cryptographique GPG LINBIT (Fail-Fast)
+  ansible.builtin.shell: |
+    set -o pipefail
+    gpg --show-keys --with-colons /etc/apt/keyrings/linbit-drbd9-ppa.asc | awk -F: '/^fpr:/{print $10; exit}'
+  args:
+    executable: /bin/bash
+  register: empreinte_gpg_linbit
+  changed_when: false
+  failed_when: empreinte_gpg_linbit.stdout != "CC1B5A793C04BB3905AD837734893610CEAA9512"
+  tags: [os, drbd]
+
+- name: Configuration du dépôt LINBIT DRBD 9 au format Deb822 (branche LTS noble)
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/linbit-drbd9-stable.sources
+    mode: "0644"
+    content: |
+      Enabled: yes
+      Types: deb
+      URIs: https://ppa.launchpadcontent.net/linbit/linbit-drbd9-stack/ubuntu
+      Suites: noble
+      Components: main
+      Architectures: {{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }}
+      Signed-By: /etc/apt/keyrings/linbit-drbd9-ppa.asc
+  tags: [os, drbd]
+
+- name: Installation des en-têtes du noyau actif et compilation de DRBD 9 (DKMS)
+  ansible.builtin.apt:
+    name:
+      - "linux-headers-{{ ansible_facts['kernel'] }}"
+      - drbd-dkms
+      - drbd-utils
+    state: present
+    update_cache: true
+  throttle: 1
+  tags: [os, drbd]
+
+- name: Vérification que la clé publique SSH est bien présente pour 'ansible' avant de couper les mots de passe
+  ansible.builtin.stat:
+    path: /home/ansible/.ssh/authorized_keys
+  register: verification_cle_ssh
+  failed_when: not verification_cle_ssh.stat.exists or verification_cle_ssh.stat.size == 0
+  tags: [os, ssh, security]
+
+- name: Déploiement de la configuration SSH durcie (/etc/ssh/sshd_config.d/99-homelab-hardening.conf)
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/99-homelab-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Configuration gérée par Ansible (Rôle incus_host)
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PubkeyAuthentication yes
+      PermitEmptyPasswords no
+      X11Forwarding no
+      AllowAgentForwarding no
+      MaxAuthTries 3
+      LoginGraceTime 20
+      AllowUsers ansible
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: Recharger le service OpenSSH
+  tags: [os, ssh, security]
+
+- name: Désactivation immédiate du swap en mémoire
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+  tags: [os]
+
+- name: Désactivation permanente du swap dans /etc/fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+.*)$'
+    replace: '# \1'
+  tags: [os]
+
+- name: Configuration du chargement automatique des modules noyau au démarrage (K3s + DRBD 9)
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k3s-incus.conf
+    mode: "0644"
+    content: |
+      overlay
+      br_netfilter
+      ip_tables
+      ip6_tables
+      nf_tables
+      netlink_diag
+      nf_nat
+      dm_thin_pool
+      loop
+      drbd
+      drbd_transport_tcp
+  tags: [os, drbd]
+
+- name: Déchargement du module DRBD v8 natif du noyau s'il était chargé avant DKMS
+  ansible.builtin.shell: |
+    if [ -f /proc/drbd ] && grep -q "version: 8\." /proc/drbd; then
+      modprobe -r drbd_transport_tcp drbd
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  tags: [os, drbd]
+
+- name: Chargement immédiat des modules noyau requis
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+    - ip_tables
+    - ip6_tables
+    - nf_tables
+    - netlink_diag
+    - nf_nat
+    - dm_thin_pool
+    - loop
+    - drbd
+    - drbd_transport_tcp
+  tags: [os, drbd]
+
+- name: Vérification que le module DRBD chargé est bien en version 9.x (Fail-Fast)
+  ansible.builtin.command:
+    argv:
+      - grep
+      - "version: 9."
+      - /proc/drbd
+  changed_when: false
+  tags: [os, drbd]
+
+- name: Application des paramètres sysctl hôte (limites inotify et routage IPv4)
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-k3s-incus-host.conf
+    sysctl_set: true
+    state: present
+    reload: true
+  loop:
+    - { key: "fs.inotify.max_user_instances", value: "1048576" }
+    - { key: "fs.inotify.max_user_watches", value: "1048576" }
+    - { key: "fs.file-max", value: "2097152" }
+    - { key: "vm.max_map_count", value: "262144" }
+    - { key: "net.ipv4.ip_forward", value: "1" }
+  tags: [os]
+
+# =============================================================================
+# 3. INSTALLATION D'INCUS 7.5 VIA LE DÉPÔT OFFICIEL ZABBLY (STABLE)
+# =============================================================================
+- name: Téléchargement de la clé publique GPG officielle Zabbly
+  ansible.builtin.get_url:
+    url: https://pkgs.zabbly.com/key.asc
+    dest: /etc/apt/keyrings/zabbly.asc
+    mode: "0644"
+  tags: [incus]
+
+- name: Vérification de l'empreinte cryptographique GPG Zabbly (Fail-Fast)
+  ansible.builtin.shell: |
+    set -o pipefail
+    gpg --show-keys --with-colons /etc/apt/keyrings/zabbly.asc | awk -F: '/^fpr:/{print $10; exit}'
+  args:
+    executable: /bin/bash
+  register: empreinte_gpg_zabbly
+  changed_when: false
+  failed_when: empreinte_gpg_zabbly.stdout != "4EFC590696CB15B87C73A3AD82CC8797C838DCFD"
+  tags: [incus]
+
+- name: Configuration du dépôt Zabbly Incus (stable) au format Deb822 pour Ubuntu 26.04
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/zabbly-incus-stable.sources
+    mode: "0644"
+    content: |
+      Enabled: yes
+      Types: deb
+      URIs: https://pkgs.zabbly.com/incus/stable
+      Suites: {{ ansible_facts['distribution_release'] }}
+      Components: main
+      Architectures: {{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else ansible_facts['architecture'] }}
+      Signed-By: /etc/apt/keyrings/zabbly.asc
+  tags: [incus]
+
+- name: Installation d'Incus 7.5 et du client CLI
+  ansible.builtin.apt:
+    name:
+      - incus
+      - incus-client
+    state: present
+    update_cache: true
+  tags: [incus]
+
+- name: Activation et démarrage des services Incus
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - incus.socket
+    - incus.service
+  tags: [incus]
+
+# =============================================================================
+# 4. INITIALISATION PRESEED ET GÉNÉRATION DES JETONS TERRAFORM
+# =============================================================================
+- name: Vérification si le pool de stockage Incus 'default' existe déjà
+  ansible.builtin.command: incus storage show default
+  register: verification_pool_incus
+  failed_when: false
+  changed_when: false
+  tags: [incus]
+
+- name: Initialisation déclarative d'Incus (--preseed) si non configuré
+  ansible.builtin.command:
+    cmd: incus admin init --preseed
+    stdin: |
+      config:
+        core.https_address: 0.0.0.0:8443
+      networks: []
+      storage_pools:
+        - name: default
+          driver: dir
+          config:
+            source: /var/lib/incus/storage-pools/default
+      profiles:
+        - name: default
+          devices:
+            root:
+              path: /
+              pool: default
+              type: disk
+  when: verification_pool_incus.rc != 0
+  changed_when: true
+  tags: [incus]
+
+- name: Vérification des certificats clients déjà enregistrés dans Incus
+  ansible.builtin.command: incus config trust list -f csv
+  register: liste_clients_incus
+  changed_when: false
+  tags: [incus, token]
+
+- name: Génération du jeton d'approbation (Trust Token) pour Terraform
+  ansible.builtin.command: "incus config trust add {{ incus_trust_name }}"
+  register: nouveau_jeton_incus
+  when: incus_trust_name not in liste_clients_incus.stdout
+  changed_when: true
+  tags: [incus, token]
+
+- name: Affichage du jeton Terraform à copier dans le fichier .env
+  ansible.builtin.debug:
+    msg: "Jeton pour {{ inventory_hostname }} ({{ ansible_host }}) : {{ nouveau_jeton_incus.stdout }}"
+  when: nouveau_jeton_incus.changed
+  tags: [incus, token]

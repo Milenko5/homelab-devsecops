@@ -1,0 +1,141 @@
+name: CI - Validation Infrastructure & GitOps
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "cluster/**"
+      - ".github/workflows/ci-infra.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - "cluster/**"
+
+# Principe du moindre privilège : lecture seule du code
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. DÉTECTION DE SECRETS (Empêche toute fuite accidentelle de clé ou token)
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: "Sécurité : Scan de Secrets (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du dépôt avec historique
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Exécution de Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # 2. VALIDATION OPENTOFU / TERRAFORM (Formatage, Chiffrement State & TFLint)
+  # ---------------------------------------------------------------------------
+  opentofu-check:
+    name: "IaC : Validation OpenTofu (HCL) & TFLint"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    env:
+      # Phrase secrète factice de 24 caractères uniquement pour la validation syntaxique CI
+      TF_VAR_state_passphrase: "ci-validation-dummy-passphrase"
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation d'OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.13.2"
+
+      - name: Vérification du formatage HCL (tofu fmt)
+        run: tofu fmt -check -recursive
+
+      - name: Initialisation sans backend distant
+        run: tofu init -backend=false
+
+      - name: Validation syntaxique et vérification du bloc encryption
+        run: tofu validate
+
+      - name: Installation et exécution de TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.65.0
+      - name: Analyse TFLint
+        run: |
+          tflint --init
+          tflint --recursive
+
+  # ---------------------------------------------------------------------------
+  # 3. VALIDATION ANSIBLE (Bonnes pratiques et idempotence des rôles)
+  # ---------------------------------------------------------------------------
+  ansible-check:
+    name: "Config : Validation Ansible Lint"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/ansible
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation d'Ansible et des collections requises
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible ansible-lint
+          ansible-galaxy collection install ansible.posix community.general
+
+      - name: Analyse de qualité avec Ansible-Lint (Hôtes & K3s)
+        run: ansible-lint playbook-hosts.yml playbook.yml
+
+  # ---------------------------------------------------------------------------
+  # 4. VALIDATION KUBERNETES, FLUXCD & AUDIT DE SÉCURITÉ CHECKOV
+  # ---------------------------------------------------------------------------
+  k8s-gitops-check:
+    name: "GitOps : Schémas Kubernetes & Audit Checkov"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installation de Kubeconform et Flux CLI
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/yannh/kubeconform/releases/download/v0.8.0/CHECKSUMS"
+          sha256sum -c --ignore-missing CHECKSUMS
+          sudo tar -xzv -C /usr/local/bin kubeconform -f kubeconform-linux-amd64.tar.gz
+
+          curl -fsSLO "https://github.com/fluxcd/flux2/releases/download/v2.10.0/flux_2.10.0_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/fluxcd/flux2/releases/download/v2.10.0/flux_2.10.0_checksums.txt"
+          sha256sum -c --ignore-missing flux_2.10.0_checksums.txt
+          sudo tar -xzv -C /usr/local/bin flux -f flux_2.10.0_linux_amd64.tar.gz
+          rm -f *.tar.gz CHECKSUMS *_checksums.txt
+
+      - name: Téléchargement des schémas CRD de FluxCD
+        run: |
+          mkdir -p /tmp/flux-crd-schemas/master-standalone-strict
+          curl -fsSL https://github.com/fluxcd/flux2/releases/latest/download/crd-schemas.tar.gz | tar zxf - -C /tmp/flux-crd-schemas/master-standalone-strict
+
+      - name: Validation des manifestes YAML (hors secrets chiffrés SOPS)
+        run: |
+          find ./cluster -type f \( -name '*.yaml' -o -name '*.yml' \) ! -name '*.sops.yaml' ! -name '*.sops.yml' -print0 | xargs -0 -r \
+            kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -schema-location default \
+              -schema-location "/tmp/flux-crd-schemas/master-standalone-strict/{{.ResourceKind}}-{{.Group}}-{{.ResourceAPIVersion}}.json" \
+              -verbose
+
+      - name: Audit de sécurité statique IaC & Kubernetes avec Checkov
+        run: |
+          pipx install checkov==3.4.3
+          checkov -d ./cluster -d ./infrastructure/terraform --framework kubernetes terraform --quiet --compact

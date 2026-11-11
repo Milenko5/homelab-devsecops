@@ -1,0 +1,11 @@
+---
+- name: Déploiement du Cluster Kubernetes K3s en Haute Disponibilité
+  hosts: server
+  become: true
+  vars:
+    # Version figée de K3s pour garantir la reproductibilité (GitOps / IaC)
+    k3s_version: "v1.37.1+k3s1"
+
+  roles:
+    - role: os_prep
+    - role: k3s_ha

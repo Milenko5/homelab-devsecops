@@ -1,0 +1,10 @@
+---
+- name: Préparation, Installation d'Incus 7.5 et Mise à jour des Hôtes Physiques Ubuntu 26.04
+  hosts: baremetal_hosts
+  become: true
+  # Par défaut, traite les 3 serveurs simultanément (Jour 0).
+  # En maintenance (Jour 2), passez "-e serial_update=1" pour redémarrer 1 PC à la fois.
+  serial: "{{ serial_update | default(3) }}"
+
+  roles:
+    - role: incus_host
