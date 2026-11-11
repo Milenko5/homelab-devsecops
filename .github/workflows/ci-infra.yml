@@ -3,15 +3,8 @@ name: CI - Validation Infrastructure & GitOps
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "infrastructure/**"
-      - "cluster/**"
-      - ".github/workflows/ci-infra.yml"
   push:
     branches: [main]
-    paths:
-      - "infrastructure/**"
-      - "cluster/**"
 
 # Principe du moindre privilège : lecture seule du code
 permissions:
