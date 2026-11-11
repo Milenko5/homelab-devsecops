@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: 1. Récupération du code source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 2. Initialisation de Docker Buildx
         uses: docker/setup-buildx-action@v3
