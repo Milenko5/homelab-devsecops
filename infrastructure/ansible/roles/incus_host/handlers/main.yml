@@ -1,0 +1,5 @@
+---
+- name: Recharger le service OpenSSH
+  ansible.builtin.systemd:
+    name: ssh
+    state: reloaded

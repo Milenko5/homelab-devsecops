@@ -1,0 +1,21 @@
+# État OpenTofu / Terraform (chiffré en AES-GCM, mais ignoré de Git)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Variables d'environnement et clés privées
+.env
+*.agekey
+*sops-age.txt
+id_ed25519*
+kubeconfig
+*.kubeconfig
+
+# Inventaire Ansible dynamique généré par Terraform (contient les IPs locales)
+infrastructure/ansible/inventory/hosts.yml
+
+# Fichiers temporaires non chiffrés
+*.dec.yaml
+*.unencrypted.yaml

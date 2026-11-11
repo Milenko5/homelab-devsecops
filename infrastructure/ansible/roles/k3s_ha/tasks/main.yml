@@ -1,0 +1,265 @@
+---
+# 1. Préparation de la configuration déclarative K3s et du Drop-In Systemd
+- name: Création des répertoires de configuration K3s et Systemd Drop-In
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/rancher/k3s
+    - /etc/systemd/system/k3s.service.d
+
+- name: Injection du Drop-In Systemd pour conteneur Incus/LXC (kmsg, rshared, proc/sys rw et bpf)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/k3s.service.d/10-incus-lxc.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Service]
+      ExecStartPre=
+      ExecStartPre=-/bin/sh -c 'if [ ! -e /dev/kmsg ]; then mknod -m 644 /dev/kmsg c 1 11 || ln -s /dev/console /dev/kmsg; fi'
+      ExecStartPre=-/bin/mount --make-rshared /
+      ExecStartPre=-/bin/sh -c 'mountpoint -q /proc/sys || mount --bind /proc/sys /proc/sys'
+      ExecStartPre=-/bin/mount -o remount,rw /proc/sys
+      ExecStartPre=-/bin/sh -c 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
+      ExecStartPre=-/bin/mount --make-rshared /sys/fs/bpf
+      ExecStart=
+      ExecStart=/usr/local/bin/k3s server
+
+# 2. Installation du binaire et du service SANS démarrage immédiat
+- name: Installation du binaire et de l'unité K3s via le script officiel
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="{{ k3s_version }}" INSTALL_K3S_SKIP_START=true sh -s - server
+  args:
+    executable: /bin/bash
+    creates: /usr/local/bin/k3s
+
+- name: Neutralisation du fichier k3s.service.env pour éviter tout conflit avec config.yaml
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/k3s.service.env
+    content: "# Piloté exclusivement par /etc/rancher/k3s/config.yaml\n"
+    owner: root
+    group: root
+    mode: "0600"
+
+# 3. Réinitialisation complète si demandée via -e k3s_reset_cluster=true
+- name: Purge complète d'un état etcd corrompu (si k3s_reset_cluster est activé)
+  when: k3s_reset_cluster | default(false) | bool
+  block:
+    - name: Arrêt du service k3s sur tous les nœuds
+      ansible.builtin.systemd:
+        name: k3s
+        state: stopped
+        daemon_reload: true
+      failed_when: false
+
+    - name: Suppression des données etcd, CNI et certificats résiduels
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/rancher/k3s/server/db
+        - /var/lib/rancher/k3s/server/tls
+        - /var/lib/rancher/k3s/server/cred
+        - /var/lib/rancher/k3s/server/token
+        - /var/lib/rancher/k3s/server/node-token
+        - /var/lib/rancher/k3s/agent
+        - /etc/rancher/k3s/k3s.yaml
+
+# 4. Vérification de l'état d'initialisation du cluster HA
+- name: Vérifier si le cluster etcd a déjà été formé sur les nœuds secondaires
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/db/etcd/member
+  register: etcd_member_dir
+
+- name: Configuration déclarative du premier nœud maître (Cluster-Init)
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      cluster-init: true
+      write-kubeconfig-mode: "0644"
+      node-ip: "{{ ansible_host }}"
+      flannel-backend: "none"
+      disable-network-policy: true
+      disable-kube-proxy: true
+      disable:
+        - servicelb
+        - traefik
+      tls-san:
+        - "{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}"
+  when: inventory_hostname == groups['k3s_cluster'][0]
+
+# Si le cluster existe déjà sur les nœuds 2/3, on démarre tous les nœuds déjà membres en parallèle pour rétablir le quorum
+- name: Démarrage parallèle des membres etcd existants (Rétablissement du quorum après reboot)
+  ansible.builtin.systemd:
+    name: k3s
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: inventory_hostname == groups['k3s_cluster'][0] or etcd_member_dir.stat.exists
+
+- name: Validation de la disponibilité du Nœud 1 dans l'API Kubernetes
+  when: inventory_hostname == groups['k3s_cluster'][0]
+  block:
+    - name: Attente que le nœud 1 soit enregistré et stable dans l'API Kubernetes
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }}
+      register: node1_k8s_ready
+      until: node1_k8s_ready.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+  rescue:
+    - name: Extraction de la cause exacte du crash dans journalctl (Nœud 1)
+      ansible.builtin.command: journalctl -u k3s.service -n 35 --no-pager
+      register: k3s_node1_crash_log
+      changed_when: false
+
+    - name: Affichage du journal d'erreur K3s du Nœud 1
+      ansible.builtin.fail:
+        msg: "{{ k3s_node1_crash_log.stdout_lines }}"
+
+# 5. Lecture du jeton et jointure séquentielle des Nœuds 2 et 3
+- name: Lecture du jeton partagé sur le premier nœud maître
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  delegate_to: "{{ groups['k3s_cluster'][0] }}"
+  run_once: true
+  register: k3s_token_slurp
+
+- name: Configuration déclarative des nœuds secondaires (k3s-srv-02 et k3s-srv-03)
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      server: "https://{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}:6443"
+      token: "{{ k3s_token_slurp['content'] | b64decode | trim }}"
+      node-ip: "{{ ansible_host }}"
+      flannel-backend: "none"
+      disable-network-policy: true
+      disable-kube-proxy: true
+      disable:
+        - servicelb
+        - traefik
+      write-kubeconfig-mode: "0644"
+  when: inventory_hostname != groups['k3s_cluster'][0]
+
+- name: Démarrage séquentiel des nœuds secondaires avec validation Kubelet
+  when: inventory_hostname != groups['k3s_cluster'][0]
+  throttle: 1
+  block:
+    - name: Démarrage du service K3s sur le nœud secondaire
+      ansible.builtin.systemd:
+        name: k3s
+        daemon_reload: true
+        enabled: true
+        state: started
+
+    - name: Attente que le nœud secondaire rejoigne effectivement le cluster K8s
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }}
+      register: sec_k8s_ready
+      until: sec_k8s_ready.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+  rescue:
+    - name: Extraction de la cause exacte du crash dans journalctl (Nœud secondaire)
+      ansible.builtin.command: journalctl -u k3s.service -n 35 --no-pager
+      register: k3s_sec_crash_log
+      changed_when: false
+
+    - name: Affichage du journal d'erreur K3s du Nœud secondaire
+      ansible.builtin.fail:
+        msg: "{{ k3s_sec_crash_log.stdout_lines }}"
+
+# 6. Synchronisation automatique du Kubeconfig vers le DevContainer
+- name: Création du répertoire ~/.kube local dans le DevContainer
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.kube"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Récupération du fichier k3s.yaml à jour depuis le premier nœud maître
+  ansible.builtin.fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+    flat: true
+  when: inventory_hostname == groups['k3s_cluster'][0]
+
+- name: Remplacement de 127.0.0.1 par l'IP réelle du nœud maître dans ~/.kube/config
+  ansible.builtin.replace:
+    path: "{{ lookup('env', 'HOME') }}/.kube/config"
+    regexp: 'https://127\.0\.0\.1:6443'
+    replace: "https://{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}:6443"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+- name: Restriction des permissions sur ~/.kube/config (0600)
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.kube/config"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
+# 7. Déploiement déclaratif de Cilium CNI (Helm) et de la configuration L2
+- name: Déploiement de Cilium CNI et du pool L2 depuis le contrôleur Ansible
+  delegate_to: localhost
+  become: false
+  run_once: true
+  block:
+    - name: Ajout du dépôt Helm officiel Cilium
+      ansible.builtin.command: helm repo add cilium https://helm.cilium.io/ --force-update
+      changed_when: false
+
+    - name: Installation / Mise à jour de Cilium via Helm (compatible conteneurs Incus/LXC)
+      ansible.builtin.command: >
+        helm upgrade --install cilium cilium/cilium
+        --version 1.20.4
+        --namespace kube-system
+        --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config
+        --set kubeProxyReplacement=true
+        --set k8sServiceHost={{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}
+        --set k8sServicePort=6443
+        --set securityContext.privileged=true
+        --set cgroup.autoMount.enabled=false
+        --set cgroup.hostRoot=/sys/fs/cgroup
+        --set bpf.autoMount.enabled=false
+        --set sysctlfix.enabled=false
+        --set l2announcements.enabled=true
+        --set externalIPs.enabled=true
+        --set k8sClientRateLimit.qps=10
+        --set k8sClientRateLimit.burst=20
+        --set operator.replicas=2
+        --set operator.rollOutPods=true
+        --set hubble.enabled=true
+        --set hubble.relay.enabled=true
+        --set hubble.ui.enabled=true
+        --set rollOutCiliumPods=true
+      register: helm_cilium_deploy
+      changed_when: "'STATUS: deployed' in helm_cilium_deploy.stdout"
+
+    - name: Attente que le DaemonSet Cilium soit entièrement opérationnel
+      ansible.builtin.command: >
+        kubectl --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config
+        -n kube-system rollout status ds/cilium --timeout=180s
+      changed_when: false
+
+    - name: Application déclarative du pool d'adresses IP et de l'annonce L2 Cilium
+      ansible.builtin.command: >
+        kubectl --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config
+        apply -f {{ playbook_dir }}/../../cluster/infrastructure/configs/cilium-l2.yml
+      register: cilium_l2_apply
+      changed_when: "'created' in cilium_l2_apply.stdout or 'configured' in cilium_l2_apply.stdout"

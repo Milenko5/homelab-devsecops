@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # 1. Mise à jour des actions GitHub (.github/workflows)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # 2. Mise à jour des providers OpenTofu/Terraform (lxc/incus, github)
+  - package-ecosystem: "terraform"
+    directory: "/infrastructure/terraform"
+    schedule:
+      interval: "weekly"
+
+  # 3. Mise à jour de l'image de base du DevContainer
+  - package-ecosystem: "docker"
+    directory: "/.devcontainer"
+    schedule:
+      interval: "weekly"

@@ -1,0 +1,38 @@
+{
+  "name": "Homelab DevSecOps Toolbox",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "root",
+  "containerEnv": {
+    "SOPS_AGE_KEY_FILE": "/root/.ssh/sops-age.txt",
+    "KUBECONFIG": "/root/.kube/config",
+    "ANSIBLE_CONFIG": "${containerWorkspaceFolder}/infrastructure/ansible/ansible.cfg"
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,consistency=cached"
+  ],
+  "postCreateCommand": "mkdir -p /root/.kube && git config --global --add safe.directory ${containerWorkspaceFolder} && terraform -version && ansible --version | head -n 1 && kubectl version --client && flux --version && sops --version",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.eol": "\n",
+        "editor.formatOnSave": true,
+        "yaml.schemas": {
+          "https://json.schemastore.org/github-workflow.json": ".github/workflows/*.yml"
+        }
+      },
+      "extensions": [
+        "hashicorp.terraform",
+        "redhat.ansible",
+        "ms-kubernetes-tools.vscode-kubernetes-tools",
+        "redhat.vscode-yaml",
+        "signageos.signageos-vscode-sops",
+        "bierner.markdown-mermaid",
+        "timonwong.shellcheck"
+      ]
+    }
+  }
+}
