@@ -87,14 +87,16 @@ jobs:
       - name: Checkout du code
         uses: actions/checkout@v7
 
-      - name: Installation d'Ansible et des collections requises
+      - name: Installation d'Ansible et Ansible-Lint dans un environnement isolé
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ansible ansible-lint
-          ansible-galaxy collection install ansible.posix community.general
+          python3 -m venv /tmp/ansible-lint-venv
+          /tmp/ansible-lint-venv/bin/pip install --upgrade pip ansible-core ansible-lint
+          /tmp/ansible-lint-venv/bin/ansible-galaxy collection install ansible.posix community.general
 
       - name: Analyse de qualité avec Ansible-Lint (Hôtes & K3s)
-        run: ansible-lint playbook-hosts.yml playbook.yml
+        run: |
+          export PATH="/tmp/ansible-lint-venv/bin:$PATH"
+          ansible-lint playbook-hosts.yml playbook.yml
 
   # ---------------------------------------------------------------------------
   # 4. VALIDATION KUBERNETES, FLUXCD & AUDIT DE SÉCURITÉ CHECKOV

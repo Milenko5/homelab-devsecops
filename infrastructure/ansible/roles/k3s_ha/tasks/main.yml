@@ -74,7 +74,7 @@
 - name: Vérifier si le cluster etcd a déjà été formé sur les nœuds secondaires
   ansible.builtin.stat:
     path: /var/lib/rancher/k3s/server/db/etcd/member
-  register: etcd_member_dir
+  register: k3s_ha_etcd_member_dir
 
 - name: Configuration déclarative du premier nœud maître (Cluster-Init)
   ansible.builtin.copy:
@@ -103,27 +103,27 @@
     daemon_reload: true
     enabled: true
     state: started
-  when: inventory_hostname == groups['k3s_cluster'][0] or etcd_member_dir.stat.exists
+  when: inventory_hostname == groups['k3s_cluster'][0] or k3s_ha_etcd_member_dir.stat.exists
 
 - name: Validation de la disponibilité du Nœud 1 dans l'API Kubernetes
   when: inventory_hostname == groups['k3s_cluster'][0]
   block:
     - name: Attente que le nœud 1 soit enregistré et stable dans l'API Kubernetes
       ansible.builtin.command: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }}
-      register: node1_k8s_ready
-      until: node1_k8s_ready.rc == 0
+      register: k3s_ha_node1_k8s_ready
+      until: k3s_ha_node1_k8s_ready.rc == 0
       retries: 24
       delay: 5
       changed_when: false
   rescue:
     - name: Extraction de la cause exacte du crash dans journalctl (Nœud 1)
       ansible.builtin.command: journalctl -u k3s.service -n 35 --no-pager
-      register: k3s_node1_crash_log
+      register: k3s_ha_node1_crash_log
       changed_when: false
 
     - name: Affichage du journal d'erreur K3s du Nœud 1
       ansible.builtin.fail:
-        msg: "{{ k3s_node1_crash_log.stdout_lines }}"
+        msg: "{{ k3s_ha_node1_crash_log.stdout_lines }}"
 
 # 5. Lecture du jeton et jointure séquentielle des Nœuds 2 et 3
 - name: Lecture du jeton partagé sur le premier nœud maître
@@ -131,7 +131,7 @@
     src: /var/lib/rancher/k3s/server/node-token
   delegate_to: "{{ groups['k3s_cluster'][0] }}"
   run_once: true
-  register: k3s_token_slurp
+  register: k3s_ha_token_slurp
 
 - name: Configuration déclarative des nœuds secondaires (k3s-srv-02 et k3s-srv-03)
   ansible.builtin.copy:
@@ -141,7 +141,7 @@
     mode: "0600"
     content: |
       server: "https://{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}:6443"
-      token: "{{ k3s_token_slurp['content'] | b64decode | trim }}"
+      token: "{{ k3s_ha_token_slurp['content'] | b64decode | trim }}"
       node-ip: "{{ ansible_host }}"
       flannel-backend: "none"
       disable-network-policy: true
@@ -165,20 +165,20 @@
 
     - name: Attente que le nœud secondaire rejoigne effectivement le cluster K8s
       ansible.builtin.command: /usr/local/bin/k3s kubectl get node {{ inventory_hostname }}
-      register: sec_k8s_ready
-      until: sec_k8s_ready.rc == 0
+      register: k3s_ha_sec_k8s_ready
+      until: k3s_ha_sec_k8s_ready.rc == 0
       retries: 24
       delay: 5
       changed_when: false
   rescue:
     - name: Extraction de la cause exacte du crash dans journalctl (Nœud secondaire)
       ansible.builtin.command: journalctl -u k3s.service -n 35 --no-pager
-      register: k3s_sec_crash_log
+      register: k3s_ha_sec_crash_log
       changed_when: false
 
     - name: Affichage du journal d'erreur K3s du Nœud secondaire
       ansible.builtin.fail:
-        msg: "{{ k3s_sec_crash_log.stdout_lines }}"
+        msg: "{{ k3s_ha_sec_crash_log.stdout_lines }}"
 
 # 6. Synchronisation automatique du Kubeconfig vers le DevContainer
 - name: Création du répertoire ~/.kube local dans le DevContainer
@@ -248,8 +248,8 @@
         --set hubble.relay.enabled=true
         --set hubble.ui.enabled=true
         --set rollOutCiliumPods=true
-      register: helm_cilium_deploy
-      changed_when: "'STATUS: deployed' in helm_cilium_deploy.stdout"
+      register: k3s_ha_helm_cilium_deploy
+      changed_when: "'STATUS: deployed' in k3s_ha_helm_cilium_deploy.stdout"
 
     - name: Attente que le DaemonSet Cilium soit entièrement opérationnel
       ansible.builtin.command: >
@@ -261,5 +261,5 @@
       ansible.builtin.command: >
         kubectl --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config
         apply -f {{ playbook_dir }}/../../cluster/infrastructure/configs/cilium-l2.yml
-      register: cilium_l2_apply
-      changed_when: "'created' in cilium_l2_apply.stdout or 'configured' in cilium_l2_apply.stdout"
+      register: k3s_ha_cilium_l2_apply
+      changed_when: "'created' in k3s_ha_cilium_l2_apply.stdout or 'configured' in k3s_ha_cilium_l2_apply.stdout"

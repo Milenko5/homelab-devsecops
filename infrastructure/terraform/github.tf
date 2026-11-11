@@ -2,6 +2,7 @@
 # 1. Dépôt GitHub public (Vitrine Portfolio DevSecOps)
 # -----------------------------------------------------------------------------
 resource "github_repository" "homelab" {
+  # checkov:skip=CKV_GIT_1:Dépôt volontairement public (Vitrine Portfolio DevSecOps ; secrets chiffrés via SOPS/Age et OpenTofu AES-GCM)
   name        = "homelab-devsecops"
   description = "Laboratoire DevSecOps Bare-Metal Haute Disponibilité (K3s, Incus 7.5, Cilium eBPF, OpenTofu, Ansible, FluxCD, Vault, Kyverno)"
   visibility  = "public"
