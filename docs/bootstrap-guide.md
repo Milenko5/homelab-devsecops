@@ -139,17 +139,20 @@ for ip in 172.16.17.240 172.16.17.241 172.16.17.242; do
 done
 ```
 
-> [!Note] Une fois l'Étape 0 (`playbook-hosts.yml`) exécutée, la connexion par mot de passe et le compte initial `ubuntu` sont définitivement désactivés en SSH au profit exclusif du compte `ansible` par clé Ed25519.
+> [!NOTE]
+> Une fois l'Étape 0 (`playbook-hosts.yml`) exécutée, la connexion par mot de passe et le compte initial `ubuntu` sont définitivement désactivés en SSH au profit exclusif du compte `ansible` par clé Ed25519.
 
 ### 4.2 Clé GPG dédiée à la signature des commits Git et vérification FluxCD
 
-Le Ruleset GitHub (`github.tf`) et le contrôleur FluxCD exigent que 100 % des commits et des tags soient signés avec votre clé GPG :
+Le Ruleset GitHub (`github.tf`) et le contrôleur FluxCD exigent que 100 % des commits et des tags soient signés avec une clé GPG valide. Vous pouvez utiliser le script d'automatisation [`./scripts/gererGPGKeys.sh`](../scripts/gererGPGKeys.sh) ou configurer manuellement votre clé :
 
 ```bash
-# 1. Identifiez l'ID long (16 caractères hexadécimaux) de votre clé GPG
+# 1. Identifiez l'ID long (16 caractères hexadécimaux) et l'email de votre clé GPG
 gpg --list-secret-keys --keyid-format=long
 
-# 2. Configurez Git pour signer systématiquement tous les commits et tags avec GPG
+# 2. Configurez Git avec EXACTEMENT la même adresse courriel que celle de votre clé GPG et de votre compte GitHub
+git config --global user.name "Votre Nom"
+git config --global user.email "votre-email-verifie-github@domaine.com"
 git config --global gpg.format openpgp
 git config --global user.signingkey <VOTRE_GPG_KEY_ID>
 git config --global commit.gpgsign true
@@ -158,16 +161,21 @@ git config --global tag.gpgSign true
 # 3. Exportez votre clé publique GPG (pour GitHub et pour le secret Kubernetes FluxCD)
 gpg --armor --export <VOTRE_GPG_KEY_ID> > ~/.ssh/flux-gpg-pub.asc
 ```
-> [!Note] *(Ajoutez le contenu de `~/.ssh/flux-gpg-pub.asc` dans **GitHub Settings -> SSH and GPG keys -> New GPG key**).*
 
-> [!Warning] Votre clef GPG doit être générer à l'extérieur du devcontainer.  En l'exportant dans le répertoire ~/.ssh de votre utilisateur, elle sera accessible dans le devcontainer.
+> [!IMPORTANT]
+> Pour que GitHub affiche le badge **`Verified`**, l'adresse courriel définie dans `git config --global user.email` doit impérativement correspondre à l'identité (`uid`) de la clé GPG **et** être une adresse courriel vérifiée dans votre compte GitHub (**Settings $\rightarrow$ Emails**). Ajoutez ensuite le contenu de `~/.ssh/flux-gpg-pub.asc` dans **GitHub Settings $\rightarrow$ SSH and GPG keys $\rightarrow$ New GPG key**.
+
+> [!WARNING]
+> Si vous générez votre clé GPG sur le système hôte à l'extérieur du DevContainer, exportez-la dans `~/.ssh/` afin qu'elle soit accessible dans le DevContainer via le point de montage persistant.
+
 ### 4.3 Clé de chiffrement Age pour Mozilla SOPS (Secrets Kubernetes)
 
 ```bash
 age-keygen -o ~/.ssh/sops-age.txt
 ```
 
-> [!Important] Copiez la clé publique affichée dans le terminal (commençant par `age1...`) et remplacez la valeur correspondante dans le fichier `.sops.yaml` situé à la racine du dépôt.
+> [!IMPORTANT]
+> Copiez la clé publique affichée dans le terminal (commençant par `age1...`) et remplacez la valeur correspondante dans le fichier `.sops.yaml` situé à la racine du dépôt.
 
 ---
 
@@ -216,13 +224,15 @@ ansible-playbook -i inventory/baremetal.yml playbook-hosts.yml
 cd ../..
 ```
 
-> [!Important] Copiez les 3 jetons affichés à la fin du playbook dans votre fichier `.env`, puis chargez les variables :
-
-> [!Note] Il est possible d'effectuer un dryrun, pour parer à d'éventuelle erreur, il suffit d'ajouter `--check --diff` à votre commande `ansible-playbook`
+> [!IMPORTANT]
+> Copiez les 3 jetons affichés à la fin du playbook dans votre fichier `.env`, puis chargez les variables :
 
 ```bash
 source .env
 ```
+
+> [!TIP]
+> Il est possible d'effectuer un *dry-run* préalable en ajoutant `--check --diff` à votre commande `ansible-playbook`.
 
 #### **Opération de Jour 2 (Mise à jour système Ubuntu & Incus sans coupure) :**
 
@@ -240,65 +250,38 @@ nc -zv 172.16.17.240 8443 && nc -zv 172.16.17.241 8443 && nc -zv 172.16.17.242 8
 
 # Création des profils, des 3 conteneurs Ubuntu 26.04 (12 Go RAM) et de l'inventaire Ansible
 cd infrastructure/terraform
-terraform init
-terraform plan
-terraform apply
+tofu init
+tofu plan
+tofu apply
 cd ../..
 ```
 
-### Étape 2 : Amorçage du quorum K3s Haute Disponibilité (Ansible)
+### Étape 2 : Amorçage automatisé du quorum K3s HA et du réseau Cilium eBPF / L2 (Ansible)
+
+Le playbook `playbook.yml` exécute séquentiellement les rôles `os_prep` et `k3s_ha` :
+1. Vérifie que le module noyau **DRBD 9** de l'hôte est bien exposé dans chaque conteneur (`/proc/drbd`), monte `/sys/fs/bpf` et applique les paramètres `sysctl`.
+2. Initialise le cluster `etcd` sur `k3s-srv-01` (avec le drop-in systemd `10-incus-lxc.conf`), joint séquentiellement `k3s-srv-02` et `k3s-srv-03`.
+3. Rapatrie automatiquement le fichier `~/.kube/config` dans le DevContainer et en conserve une copie persistante dans `~/.ssh/homelab.kubeconfig` (restaurée automatiquement au démarrage du DevContainer via `postStartCommand`).
+4. Déploie **Cilium 1.20.4** via Helm en mode remplacement strict de `kube-proxy` (`kubeProxyReplacement=true`, `sysctlfix.enabled=false`, `l2announcements.enabled=true`) et applique le pool d'adresses IP L2 (`cluster/infrastructure/configs/cilium-l2.yml`).
 
 ```bash
 cd infrastructure/ansible
 ansible-playbook playbook.yml
 cd ../..
-
-# Vérification des 3 nœuds (statut NotReady normal tant que Cilium n'est pas installé)
-kubectl get nodes -o wide
 ```
 
-### Étape 3 : Amorçage du réseau eBPF et du LoadBalancer L2 (Cilium)
+### Étape 3 : Vérification de la santé du cluster K3s HA, d'eBPF et du LoadBalancer L2
 
 ```bash
-helm repo add cilium https://helm.cilium.io/
-helm repo update
-
-helm upgrade --install cilium cilium/cilium \
-  --namespace kube-system \
-  --set kubeProxyReplacement=true \
-  --set k8sServiceHost="172.16.17.221" \
-  --set k8sServicePort=6443 \
-  --set cgroup.autoMount.enabled=false \
-  --set cgroup.hostRoot=/sys/fs/cgroup \
-  --set bpf.autoMount.enabled=false \
-  --set l2announcements.enabled=true \
-  --set externalIPs.enabled=true \
-  --set k8sClientRateLimit.qps=10 \
-  --set k8sClientRateLimit.burst=20 \
-  --set operator.replicas=2 \
-  --set operator.rollOutPods=true \
-  --set hubble.enabled=true \
-  --set hubble.relay.enabled=true \
-  --set hubble.ui.enabled=true \
-  --set rollOutCiliumPods=true
-```
-
-Surveillez le démarrage des pods Cilium et le passage des 3 noeuds à `Ready`
-
-```sh
-kubectl -n kube-system rollout status ds/cilium --timeout=180s
+# 1. Vérifier que les 3 nœuds control-plane/etcd sont à l'état Ready
 kubectl get nodes -o wide
-```
 
-Vérifier le remplacement eBPF de kube-proxy et la santé de Cilium
-
-```sh
+# 2. Vérifier le remplacement eBPF de kube-proxy et la santé de Cilium (doit retourner OK)
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+
+# 3. Vérifier que le pool d'adresses IP L2 (172.16.17.20 à .220, soit 201 IPs) est actif
 kubectl get ciliumloadbalancerippools,ciliuml2announcementpolicies -A
 ```
-
-La première commande doit retourner `OK`, c'est à dire que Cilium a pris le relais de `kube-proxy`.
-La seconde commande doit vous indiquez que vous avez 201 adresses ip de disponible.
 ### Étape 4 : Amorçage GitOps Zero-Trust (FluxCD, SOPS/Age & Vérification GPG)
 
 Puisque notre Ruleset GitHub interdit tout push direct non signé sur `main` (aucun `bypass_actors`), nous installons les contrôleurs FluxCD et injectons nos deux clés cryptographiques (**Age** pour le déchiffrement des secrets, et **GPG publique** pour la vérification des commits Git) :
@@ -313,11 +296,15 @@ cat ~/.ssh/sops-age.txt | kubectl create secret generic sops-age \
   --namespace=flux-system \
   --from-file=age.agekey=/dev/stdin
 
-# 3. Injection de votre clé publique GPG (pour la vérification des commits par source-controller)
+# 3. Injection de votre clé publique GPG et de la clé officielle GitHub Web-Flow (pour la vérification des commits et des fusions de PR par source-controller)
+gpg --armor --export "$(git config user.signingkey)" > ~/.ssh/flux-gpg-pub.asc
+curl -fsSL https://github.com/web-flow.gpg -o ~/.ssh/github-webflow.asc
 kubectl create secret generic flux-pgp-public-keys \
   --namespace=flux-system \
-  --from-file=my-git-pubkey.asc=$HOME/.ssh/flux-gpg-pub.asc
+  --from-file=my-git-pubkey.asc=$HOME/.ssh/flux-gpg-pub.asc \
+  --from-file=github-webflow.asc=$HOME/.ssh/github-webflow.asc \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 # 4. Application de la synchronisation GitOps (une fois vos fichiers cluster/ fusionnés sur main via une PR signée GPG)
-kubectl apply -f cluster/clusters/homelab/flux-system/
+kubectl apply -k cluster/clusters/homelab/flux-system
 ```
