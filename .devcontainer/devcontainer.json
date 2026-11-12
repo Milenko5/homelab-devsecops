@@ -14,6 +14,7 @@
     "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,consistency=cached"
   ],
   "postCreateCommand": "mkdir -p /root/.kube && git config --global --add safe.directory ${containerWorkspaceFolder} && terraform -version && ansible --version | head -n 1 && kubectl version --client && flux --version && sops --version",
+  "postStartCommand": "mkdir -p /root/.kube && if [ ! -s /root/.kube/config ]; then if [ -s /root/.ssh/homelab.kubeconfig ]; then cp /root/.ssh/homelab.kubeconfig /root/.kube/config && chmod 600 /root/.kube/config; elif [ -f /root/.ssh/id_ed25519_homelab ]; then ssh -i /root/.ssh/id_ed25519_homelab -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no ansible@172.16.17.221 'sudo cat /etc/rancher/k3s/k3s.yaml' 2>/dev/null | sed 's/127.0.0.1/172.16.17.221/g' > /root/.kube/config && chmod 600 /root/.kube/config || rm -f /root/.kube/config; fi; fi",
   "customizations": {
     "vscode": {
       "settings": {

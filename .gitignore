@@ -19,3 +19,6 @@ infrastructure/ansible/inventory/hosts.yml
 # Fichiers temporaires non chiffrés
 *.dec.yaml
 *.unencrypted.yaml
+
+# Fichiers IntelliJ Idea
+.idea/*
