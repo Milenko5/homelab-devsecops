@@ -214,6 +214,15 @@
   become: false
   run_once: true
 
+- name: Sauvegarde persistante du Kubeconfig dans ~/.ssh/homelab.kubeconfig (survit aux rebuilds du DevContainer)
+  ansible.builtin.copy:
+    src: "{{ lookup('env', 'HOME') }}/.kube/config"
+    dest: "{{ lookup('env', 'HOME') }}/.ssh/homelab.kubeconfig"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  run_once: true
+
 # 7. Déploiement déclaratif de Cilium CNI (Helm) et de la configuration L2
 - name: Déploiement de Cilium CNI et du pool L2 depuis le contrôleur Ansible
   delegate_to: localhost
