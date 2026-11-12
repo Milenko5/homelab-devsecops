@@ -7,6 +7,7 @@ SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
+ENV EDITOR=vim
 
 # Versions figées des outils (Reproductibilité ADR-0009)
 ARG OPENTOFU_VERSION="1.13.2"
@@ -29,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     git \
+    vim \
     unzip \
     tar \
     gzip \
