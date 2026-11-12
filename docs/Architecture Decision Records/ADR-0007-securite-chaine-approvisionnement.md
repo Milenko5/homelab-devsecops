@@ -22,11 +22,11 @@ Nous avons écarté Trivy au profit d'une chaîne d'approvisionnement "Zero Trus
 
 ## Conséquences et justifications
 
-- ### 1. Pourquoi remplacer Trivy par le trio Syft + Grype + Checkov ?
+### 1. Pourquoi remplacer Trivy par le trio Syft + Grype + Checkov ?
 
 * **Réduction de la surface d'attaque et isolation des identifiants :** Dans notre pipeline `supply-chain.yml`, **Syft** inspecte l'image une seule fois pour produire un fichier local `sbom.spdx.json`. Le scanner de vulnérabilités **Grype** s'exécute ensuite exclusivement sur ce fichier JSON local (`grype sbom:./sbom.spdx.json`) sans nécessiter aucun accès au démon Docker ni aux jetons d'authentification du registre (`GITHUB_TOKEN`).
 
-* **Spécialisation de l'audit IaC avec Checkov :** Plutôt que de dépendre d'un scanner de conteneurs pour auditer du code d'infrastructure, **Checkov** apporte des règles de gouvernance spécialisées pour Kubernetes, OpenTofu (HCL) et les Dockerfiles.
+* **Spécialisation de l'audit IaC avec Checkov :** Plutôt que de dépendre d'un scanner de conteneurs pour auditer du code d'infrastructure, **Checkov** apporte des règles de gouvernance spécialisées pour Kubernetes, OpenTofu (HCL) et les Dockerfiles. Les dérogations architecturales assumées (comme la visibilité publique du dépôt portfolio pour la règle `CKV_GIT_1` ou le modèle `.env.example` dans `.gitleaks.toml`) sont explicitement documentées et auditées dans le code.
 
 ### 2. Ségrégation des Clés et Non-Répudiation Git (GPG vs SSH)
 
@@ -34,7 +34,7 @@ Nous avons écarté Trivy au profit d'une chaîne d'approvisionnement "Zero Trus
 
 * **Absence de Bypass sur `main` :** Le Ruleset GitHub géré par Terraform/OpenTofu interdit tout push direct sur `main`. Tout changement doit obligatoirement passer par une Pull Request signée en GPG et validée par les 4 contrôles CI (`Gitleaks`, `Terraform/OpenTofu/TFLint`, `Ansible-Lint`, `Kubeconform/Checkov`).
 
-* **Vérification Cryptographique In-Cluster par FluxCD :** La ressource `GitRepository` de FluxCD est configurée avec `spec.verify.mode: HEAD`. Le contrôleur Kubernetes vérifie localement la signature GPG de chaque commit contre le secret `flux-pgp-public-keys` avant d'autoriser toute réconciliation dans le cluster.
+* **Vérification Cryptographique In-Cluster par FluxCD :** La ressource `GitRepository` de FluxCD est configurée avec `spec.verify.mode: HEAD`. Le contrôleur Kubernetes `source-controller` vérifie localement la signature GPG de chaque commit contre le secret `flux-pgp-public-keys` (qui regroupe la clé publique GPG de l'administrateur et la clé officielle `web-flow.gpg` de GitHub pour les fusions de Pull Requests) avant d'autoriser toute réconciliation dans le cluster.
 
 ### 3. Sécurité des Images OCI ("Shift-Left" et "Shield-Right")
 

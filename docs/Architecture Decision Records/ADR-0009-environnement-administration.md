@@ -14,7 +14,7 @@ Nous avons décidé d'encapsuler l'intégralité de la boîte à outils d'admini
 
 ## Conséquences et justifications
 
-* **Intégrité des Binaires et Approche Fail-Fast (`sha256sum -c`) :** Aucun binaire n'est extrait ou rendu exécutable sans avoir préalablement validé son condensat SHA-256 contre le manifeste de contrôle officiel de l'éditeur. Le `Dockerfile` s'exécute sous `SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]` : la moindre divergence de hachage provoque l'arrêt immédiat de la construction de l'image. Cette même règle est appliquée dans Ansible pour le binaire K3s (`INSTALL_K3S_SKIP_DOWNLOAD=true` après validation SHA-256) et pour la clé GPG du dépôt Zabbly Incus.
+* **Intégrité des Binaires et Approche Fail-Fast (`sha256sum -c`) :** Aucun binaire n'est extrait ou rendu exécutable sans avoir préalablement validé son condensat SHA-256 contre le manifeste de contrôle officiel de l'éditeur. Le `Dockerfile` s'exécute sous `SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]` : la moindre divergence de hachage provoque l'arrêt immédiat de la construction de l'image. Cette même exigence de validation cryptographique est appliquée dans Ansible pour les empreintes GPG des dépôts Zabbly Incus et LINBIT DRBD 9.
 
 * **Zéro Dérive de Version (Immutable Toolbox) :** Les versions de tous les outils CLI sont figées via des arguments `ARG` explicites dans le `Dockerfile`, garantissant une parité stricte entre le poste local et les pipelines GitHub Actions.
 
@@ -22,4 +22,4 @@ Nous avons décidé d'encapsuler l'intégralité de la boîte à outils d'admini
     
 * **Sécurité et isolation :** L'environnement de travail est isolé du système d'exploitation hôte. Les extensions de l'éditeur (Visual Studio Code) nécessaires au projet (comme le surlignage syntaxique pour Terraform/OpenTofu ou l'intégration de SOPS) sont installées automatiquement dans le conteneur sans altérer la configuration personnelle de l'utilisateur.
     
-* **Isolation des Secrets Hôtes :** L'image Docker du DevContainer ne contient aucun secret. Les clés SSH, Age et le socket `gpg-agent` sont montés dynamiquement à l'exécution depuis l'hôte, permettant de publier et signer l'image du DevContainer sur `ghcr.io` en toute sécurité.
+* **Isolation des Secrets Hôtes et Persistance Automatique du Kubeconfig :** L'image Docker du DevContainer ne contient aucun secret. Les clés SSH, Age, GPG et la sauvegarde persistante du Kubeconfig (`~/.ssh/homelab.kubeconfig`, automatiquement restaurée vers `~/.kube/config` via `postStartCommand` lors de chaque reconstruction du conteneur) sont montées dynamiquement à l'exécution depuis l'hôte, permettant de publier et signer l'image du DevContainer sur `ghcr.io` en toute sécurité.
