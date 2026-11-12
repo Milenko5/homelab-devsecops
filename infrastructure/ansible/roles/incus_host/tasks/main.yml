@@ -18,7 +18,7 @@
 - name: Vérification si un redémarrage du serveur physique est requis (ex. mise à jour noyau)
   ansible.builtin.stat:
     path: /var/run/reboot-required
-  register: etat_redemarrage_requis
+  register: incus_host_etat_redemarrage_requis
   tags: [update]
 
 - name: Redémarrage contrôlé du serveur physique si nécessaire
@@ -29,7 +29,7 @@
     pre_reboot_delay: 0
     post_reboot_delay: 15
     test_command: uptime
-  when: etat_redemarrage_requis.stat.exists
+  when: incus_host_etat_redemarrage_requis.stat.exists
   tags: [update]
 
 # =============================================================================
@@ -79,7 +79,7 @@
 - name: Vérification si la clé publique GPG du PPA LINBIT est déjà présente
   ansible.builtin.stat:
     path: /etc/apt/keyrings/linbit-drbd9-ppa.asc
-  register: cle_linbit_stat
+  register: incus_host_cle_linbit_stat
   tags: [os, drbd]
 
 - name: Téléchargement de la clé publique GPG officielle du PPA LINBIT via IPv4 (Launchpad)
@@ -95,7 +95,7 @@
       - "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xCC1B5A793C04BB3905AD837734893610CEAA9512"
       - "-o"
       - "/etc/apt/keyrings/linbit-drbd9-ppa.asc"
-  when: not cle_linbit_stat.stat.exists or cle_linbit_stat.stat.size == 0
+  when: not incus_host_cle_linbit_stat.stat.exists or incus_host_cle_linbit_stat.stat.size == 0
   throttle: 1
   changed_when: true
   tags: [os, drbd]
@@ -114,9 +114,9 @@
     gpg --show-keys --with-colons /etc/apt/keyrings/linbit-drbd9-ppa.asc | awk -F: '/^fpr:/{print $10; exit}'
   args:
     executable: /bin/bash
-  register: empreinte_gpg_linbit
+  register: incus_host_empreinte_gpg_linbit
   changed_when: false
-  failed_when: empreinte_gpg_linbit.stdout != "CC1B5A793C04BB3905AD837734893610CEAA9512"
+  failed_when: incus_host_empreinte_gpg_linbit.stdout != "CC1B5A793C04BB3905AD837734893610CEAA9512"
   tags: [os, drbd]
 
 - name: Configuration du dépôt LINBIT DRBD 9 au format Deb822 (branche LTS noble)
@@ -147,8 +147,8 @@
 - name: Vérification que la clé publique SSH est bien présente pour 'ansible' avant de couper les mots de passe
   ansible.builtin.stat:
     path: /home/ansible/.ssh/authorized_keys
-  register: verification_cle_ssh
-  failed_when: not verification_cle_ssh.stat.exists or verification_cle_ssh.stat.size == 0
+  register: incus_host_verification_cle_ssh
+  failed_when: not incus_host_verification_cle_ssh.stat.exists or incus_host_verification_cle_ssh.stat.size == 0
   tags: [os, ssh, security]
 
 - name: Déploiement de la configuration SSH durcie (/etc/ssh/sshd_config.d/99-homelab-hardening.conf)
@@ -273,9 +273,9 @@
     gpg --show-keys --with-colons /etc/apt/keyrings/zabbly.asc | awk -F: '/^fpr:/{print $10; exit}'
   args:
     executable: /bin/bash
-  register: empreinte_gpg_zabbly
+  register: incus_host_empreinte_gpg_zabbly
   changed_when: false
-  failed_when: empreinte_gpg_zabbly.stdout != "4EFC590696CB15B87C73A3AD82CC8797C838DCFD"
+  failed_when: incus_host_empreinte_gpg_zabbly.stdout != "4EFC590696CB15B87C73A3AD82CC8797C838DCFD"
   tags: [incus]
 
 - name: Configuration du dépôt Zabbly Incus (stable) au format Deb822 pour Ubuntu 26.04
@@ -316,7 +316,7 @@
 # =============================================================================
 - name: Vérification si le pool de stockage Incus 'default' existe déjà
   ansible.builtin.command: incus storage show default
-  register: verification_pool_incus
+  register: incus_host_verification_pool_incus
   failed_when: false
   changed_when: false
   tags: [incus]
@@ -340,25 +340,25 @@
               path: /
               pool: default
               type: disk
-  when: verification_pool_incus.rc != 0
+  when: incus_host_verification_pool_incus.rc != 0
   changed_when: true
   tags: [incus]
 
 - name: Vérification des certificats clients déjà enregistrés dans Incus
   ansible.builtin.command: incus config trust list -f csv
-  register: liste_clients_incus
+  register: incus_host_liste_clients_incus
   changed_when: false
   tags: [incus, token]
 
 - name: Génération du jeton d'approbation (Trust Token) pour Terraform
   ansible.builtin.command: "incus config trust add {{ incus_trust_name }}"
-  register: nouveau_jeton_incus
-  when: incus_trust_name not in liste_clients_incus.stdout
+  register: incus_host_nouveau_jeton_incus
+  when: incus_trust_name not in incus_host_liste_clients_incus.stdout
   changed_when: true
   tags: [incus, token]
 
-- name: Affichage du jeton Terraform à copier dans le fichier .env
+- name: Affichage du jeton Terraform à copier dans le fichier .env # noqa: no-handler
   ansible.builtin.debug:
-    msg: "Jeton pour {{ inventory_hostname }} ({{ ansible_host }}) : {{ nouveau_jeton_incus.stdout }}"
-  when: nouveau_jeton_incus.changed
+    msg: "Jeton pour {{ inventory_hostname }} ({{ ansible_host }}) : {{ incus_host_nouveau_jeton_incus.stdout }}"
+  when: incus_host_nouveau_jeton_incus is changed
   tags: [incus, token]

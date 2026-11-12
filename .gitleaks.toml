@@ -1,0 +1,10 @@
+title = "Configuration Gitleaks - Homelab DevSecOps"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignorer le modèle .env.example contenant uniquement des valeurs factices"
+paths = [
+  '''^\.env\.example$'''
+]
