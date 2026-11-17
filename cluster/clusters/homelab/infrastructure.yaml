@@ -27,6 +27,7 @@ metadata:
 spec:
   dependsOn:
     - name: infrastructure-controllers
+    - name: piraeus-operator
   interval: 15m0s
   retryInterval: 2m0s
   timeout: 5m0s
