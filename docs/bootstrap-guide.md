@@ -8,17 +8,19 @@ Ce document décrit les étapes manuelles requises lors du « Jour 0 » avant de
 
 Avant de commencer, assurez-vous que la configuration suivante est appliquée sur votre routeur domestique / pare-feu afin d'éviter tout conflit d'adresses IP :
 
-| Composant / Rôle                  | Adresse IP / Plage                    | Interface / Notes                              |
-| :-------------------------------- | :------------------------------------ | :--------------------------------------------- |
-| **Sous-réseau LAN & Passerelle**  | `172.16.16.0/23` (GW : `172.16.16.1`) | Réseau physique local                          |
-| **Plage DHCP du Routeur**         | `172.16.16.10` à `172.16.16.150`      | Plage réservée aux appareils domestiques       |
-| **Hôte Physique 1 (Intel 16 Go)** | `172.16.17.240` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443` |
-| **Hôte Physique 2 (Intel 16 Go)** | `172.16.17.241` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443` |
-| **Hôte Physique 3 (Intel 16 Go)** | `172.16.17.242` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443` |
-| **Nœud K3s 1 (`k3s-srv-01`)**     | `172.16.17.221` (Statique)            | Conteneur LXC sur Hôte 1 (12 Go RAM / 80 Go)   |
-| **Nœud K3s 2 (`k3s-srv-02`)**     | `172.16.17.222` (Statique)            | Conteneur LXC sur Hôte 2 (12 Go RAM / 80 Go)   |
-| **Nœud K3s 3 (`k3s-srv-03`)**     | `172.16.17.223` (Statique)            | Conteneur LXC sur Hôte 3 (12 Go RAM / 80 Go)   |
-| **Pool Cilium LoadBalancer (L2)** | `172.16.17.20` à `172.16.17.220`      | **Exclu du DHCP** — Annonces ARP Cilium        |
+| Composant / Rôle                  | Adresse IP / Plage                    | Interface / Notes                                             |
+| :-------------------------------- | :------------------------------------ | :------------------------------------------------------------ |
+| **Sous-réseau LAN & Passerelle**  | `172.16.16.0/23` (GW : `172.16.16.1`) | Réseau physique local                                         |
+| **Serveurs DNS AdGuard Home HA**  | `172.16.16.5` & `172.16.16.6`         | Split-Horizon DNS géré par OpenTofu (`*.lab.sysdev.ca` $\rightarrow$ `.17.20`) |
+| **Plage DHCP du Routeur**         | `172.16.16.10` à `172.16.16.150`      | Plage réservée aux appareils domestiques                      |
+| **Hôte Physique 1 (Intel 16 Go)** | `172.16.17.240` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443`                |
+| **Hôte Physique 2 (Intel 16 Go)** | `172.16.17.241` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443`                |
+| **Hôte Physique 3 (Intel 16 Go)** | `172.16.17.242` (Statique)            | Pont `br0` — Dédié — API Incus 7.5 sur `:8443`                |
+| **Nœud K3s 1 (`k3s-srv-01`)**     | `172.16.17.221` (Statique)            | Conteneur LXC sur Hôte 1 (12 Go RAM / 80 Go)                  |
+| **Nœud K3s 2 (`k3s-srv-02`)**     | `172.16.17.222` (Statique)            | Conteneur LXC sur Hôte 2 (12 Go RAM / 80 Go)                  |
+| **Nœud K3s 3 (`k3s-srv-03`)**     | `172.16.17.223` (Statique)            | Conteneur LXC sur Hôte 3 (12 Go RAM / 80 Go)                  |
+| **VIP Ingress Traefik (L2)**      | `172.16.17.20` (Épinglée)             | Entrée HTTPS Wildcard `*.lab.sysdev.ca`                       |
+| **Pool Cilium LoadBalancer (L2)** | `172.16.17.20` à `172.16.17.220`      | **Exclu du DHCP** — Annonces ARP Cilium (201 IPs)             |
 
 ---
 ## 2. Préparation des 3 Hôtes Physiques (Ubuntu 26.04 LTS)
@@ -196,17 +198,21 @@ export TF_VAR_incus_trust_token_hote_3="COLLEZ_LE_JETON_DU_PC_3_ICI"
 # Ou la permission `Administration: Read and write` si un token `Fine-grained` est utilisé
 export GITHUB_TOKEN="ghp_votre_jeton_github"
 
-# 4. Cloudflare API Token (droits Zone:Read et DNS:Edit pour Cert-Manager DNS-01)
+# 4. Cloudflare API Token (droits Zone:Read et DNS:Edit sur sysdev.ca pour OpenTofu et Cert-Manager DNS-01)
 export CLOUDFLARE_API_TOKEN="votre_jeton_cloudflare"
+
+# 5. Identifiants administrateur des 2 serveurs AdGuard Home locaux (172.16.16.5 et 172.16.16.6)
+export TF_VAR_adguard_username="admin"
+export TF_VAR_adguard_password="votre_mot_de_passe_adguard"
 ```
 
-> [!Note]
-> 1. **GITHUB_TOKEN=** : Générez un _Personal Access Token_ (PAT) classique sur GitHub avec les droits `repo` complets et `workflow`.
-   > 
->2. **CLOUDFLARE_API_TOKEN=** : Générez un jeton personnalisé sur Cloudflare avec les permissions strictes suivantes :
- >>   - Zone -> DNS -> Edit
- >>   - Zone -> Zone -> Read        
- >>   - Inclure -> Toutes les zones (ou spécifiquement votre domaine de laboratoire). 
+> [!NOTE]
+> 1. **`GITHUB_TOKEN`** : Générez un *Personal Access Token* (PAT) sur GitHub avec les droits `repo` et `workflow` (ou un jeton *Fine-grained* avec `Administration: Read and write`).
+> 2. **`CLOUDFLARE_API_TOKEN`** : Sur le plan gratuit Cloudflare (*Free Plan* 0 $ pour `sysdev.ca`), créez un jeton basé sur le modèle **Edit zone DNS** avec les permissions strictes :
+>    - `Zone` $\rightarrow$ `DNS` $\rightarrow$ `Edit`
+>    - `Zone` $\rightarrow$ `Zone` $\rightarrow$ `Read`
+>    - `Zone Resources` $\rightarrow$ `Include` $\rightarrow$ `Specific zone` $\rightarrow$ `sysdev.ca`
+> 3. **`TF_VAR_adguard_password`** : Utilisé par le provider OpenTofu `gmichels/adguard` pour configurer automatiquement les réécritures Split-Horizon DNS (`*.lab.sysdev.ca` $\rightarrow$ `172.16.17.20`) sur vos deux serveurs AdGuard Home. 
 
 ---
 
@@ -242,18 +248,27 @@ Pour mettre à jour mensuellement les paquets APT et le noyau des 3 machines phy
 ansible-playbook -i infrastructure/ansible/inventory/baremetal.yml infrastructure/ansible/playbook-hosts.yml --tags update -e serial_update=1
 ```
 
-### Étape 1 : Provisionnement des conteneurs système K3s et des Rulesets GitHub (OpenTofu/Terraform)
+### Étape 1 : Provisionnement des conteneurs K3s, des Rulesets GitHub et du DNS Split-Horizon (OpenTofu)
+
+OpenTofu provisionne simultanément :
+1. Les profils et les 3 conteneurs système Ubuntu 26.04 LTS (12 Go RAM / 80 Go disque) sur Incus 7.5 (en conservant le certificat client mTLS de manière persistante dans `~/.ssh/incus-client` pour survivre aux reconstructions du DevContainer après consommation des jetons d'enrôlement initiaux à usage unique).
+2. Le dépôt GitHub et ses *Rulesets* Zero-Trust (`github.tf`).
+3. Les enregistrements **DNS CAA (`letsencrypt.org`)** sur la zone Cloudflare `sysdev.ca` et les réécritures **Split-Horizon DNS (`*.lab.sysdev.ca` $\rightarrow$ `172.16.17.20`)** sur les 2 serveurs AdGuard Home (`dns.tf`).
 
 ```bash
 # Vérification de l'accès à l'API des 3 hôtes Incus 7.5
 nc -zv 172.16.17.240 8443 && nc -zv 172.16.17.241 8443 && nc -zv 172.16.17.242 8443
 
-# Création des profils, des 3 conteneurs Ubuntu 26.04 (12 Go RAM) et de l'inventaire Ansible
+# Initialisation et application déclarative (avec chiffrement d'état AES-GCM)
 cd infrastructure/terraform
 tofu init
 tofu plan
 tofu apply
 cd ../..
+
+# Vérification de la résolution Split-Horizon DNS sur les 2 serveurs AdGuard Home
+dig +short traefik.lab.sysdev.ca @172.16.16.5
+dig +short traefik.lab.sysdev.ca @172.16.16.6
 ```
 
 ### Étape 2 : Amorçage automatisé du quorum K3s HA et du réseau Cilium eBPF / L2 (Ansible)
@@ -308,3 +323,25 @@ kubectl create secret generic flux-pgp-public-keys \
 # 4. Application de la synchronisation GitOps (une fois vos fichiers cluster/ fusionnés sur main via une PR signée GPG)
 kubectl apply -k cluster/clusters/homelab/flux-system
 ```
+
+### Étape 5 : Chiffrement SOPS du secret Cloudflare et validation du Stockage (Piraeus) & Ingress HTTPS (Traefik)
+
+Avant de pousser les manifestes PKI dans Git, générez le secret Kubernetes `cloudflare-secret.sops.yaml` chiffré en mémoire avec **Mozilla SOPS & Age** à partir de la variable `CLOUDFLARE_API_TOKEN` de votre fichier `.env` :
+
+```bash
+# 1. Génération en mémoire du secret chiffré SOPS/Age (sans écriture en clair sur disque)
+chmod +x scripts/chiffrerSecretCloudflare.sh
+./scripts/chiffrerSecretCloudflare.sh
+
+# 2. Vérification de l'état des composants GitOps déployés par FluxCD
+flux get all
+
+# 3. Vérification du stockage distribué Piraeus Operator v2 (LINSTOR / DRBD 9)
+kubectl get pods -n piraeus-datastore
+kubectl get sc piraeus-storage-replicated
+
+# 4. Vérification du contrôleur Ingress Traefik (IP L2 172.16.17.20) et du certificat Wildcard Let's Encrypt (*.lab.sysdev.ca)
+kubectl get svc -n traefik
+kubectl get clusterissuer,certificate,order,challenge -n traefik
+```
+
