@@ -49,13 +49,13 @@ spec:
           enabled: true
     ports:
       web:
-        redirections:
-          entryPoint:
-            to: websecure
-            scheme: https
-            permanent: true
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
     service:
-      type: LoadBalancer
       annotations:
         # Épingle l'adresse IP virtuelle L2 Cilium de Traefik (cible du DNS AdGuard Home *.lab.sysdev.ca)
         io.cilium/lb-ipam-ips: "172.16.17.20"
