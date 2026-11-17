@@ -1,0 +1,54 @@
+---
+# 1. Configuration des Satellites LINSTOR :
+#    - Désactive le conteneur de compilation drbd-module-loader (DRBD 9 est déjà chargé par le noyau hôte Ubuntu 26.04)
+#    - Crée un pool de stockage Thin-Provisioning sur fichier (pool1) dans chaque conteneur K3s
+apiVersion: piraeus.io/v1
+kind: LinstorSatelliteConfiguration
+metadata:
+  name: homelab-satellite-config
+  namespace: piraeus-datastore
+spec:
+  podTemplate:
+    spec:
+      initContainers:
+        - name: drbd-shutdown-guard
+          $patch: delete
+        - name: drbd-module-loader
+          $patch: delete
+      volumes:
+        - name: run-systemd-system
+          $patch: delete
+        - name: run-drbd-shutdown-guard
+          $patch: delete
+        - name: systemd-bus-socket
+          $patch: delete
+        - name: lib-modules
+          $patch: delete
+  storagePools:
+    - name: pool1
+      fileThinPool:
+        directory: /var/lib/piraeus-datastore/pool1
+---
+# 2. Déploiement du Cluster LINSTOR (Contrôleur, Satellites et CSI Driver)
+apiVersion: piraeus.io/v1
+kind: LinstorCluster
+metadata:
+  name: linstorcluster
+  namespace: piraeus-datastore
+spec: {}
+---
+# 3. StorageClass Haute Disponibilité avec réplication synchrone DRBD 9 sur les 3 nœuds
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: piraeus-storage-replicated
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: linstor.csi.linbit.com
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  linstor.csi.linbit.com/storagePool: pool1
+  linstor.csi.linbit.com/placementCount: "3"
+  csi.storage.k8s.io/fstype: ext4
