@@ -1,0 +1,65 @@
+---
+# 1. Autorité d'émission Let's Encrypt Production via défi DNS-01 Cloudflare
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    email: admin@sysdev.ca
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - "sysdev.ca"
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token-secret
+              key: api-token
+---
+# 2. Certificat TLS Wildcard unique pour tout le sous-domaine *.lab.sysdev.ca
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-lab-sysdev-ca
+  namespace: traefik
+spec:
+  secretName: wildcard-lab-sysdev-ca-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  commonName: "*.lab.sysdev.ca"
+  dnsNames:
+    - "lab.sysdev.ca"
+    - "*.lab.sysdev.ca"
+---
+# 3. Magasin TLS par défaut de Traefik : applique automatiquement le certificat Wildcard
+#    à tous les Ingress et IngressRoutes du cluster sans configuration répétitive
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: wildcard-lab-sysdev-ca-tls
+---
+# 4. Exposition sécurisée en HTTPS du tableau de bord Traefik (https://traefik.lab.sysdev.ca/dashboard/)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: traefik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`traefik.lab.sysdev.ca`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+  tls: {}

@@ -79,3 +79,54 @@ variable "noeuds_k3s" {
     }
   }
 }
+
+# -----------------------------------------------------------------------------
+# Variables DNS Split-Horizon (Cloudflare + AdGuard Home HA)
+# -----------------------------------------------------------------------------
+variable "domaine_principal" {
+  description = "Nom de domaine public géré sur Cloudflare (Plan Gratuit)"
+  type        = string
+  default     = "sysdev.ca"
+}
+
+variable "sous_domaine_lab" {
+  description = "Sous-domaine dédié au cluster Kubernetes Homelab"
+  type        = string
+  default     = "lab.sysdev.ca"
+}
+
+variable "ip_ingress_traefik" {
+  description = "Adresse IP virtuelle L2 Cilium attribuée au contrôleur Ingress Traefik"
+  type        = string
+  default     = "172.16.17.20"
+}
+
+variable "adguard_host_1" {
+  description = "Adresse IP (et port éventuel) du serveur AdGuard Home primaire"
+  type        = string
+  default     = "172.16.16.5"
+}
+
+variable "adguard_host_2" {
+  description = "Adresse IP (et port éventuel) du serveur AdGuard Home secondaire"
+  type        = string
+  default     = "172.16.16.6"
+}
+
+variable "adguard_scheme" {
+  description = "Protocole de connexion à l'API AdGuard Home (http ou https)"
+  type        = string
+  default     = "http"
+}
+
+variable "adguard_username" {
+  description = "Nom d'utilisateur administrateur AdGuard Home"
+  type        = string
+  default     = "admin"
+}
+
+variable "adguard_password" {
+  description = "Mot de passe administrateur AdGuard Home (injecté via TF_VAR_adguard_password)"
+  type        = string
+  sensitive   = true
+}

@@ -38,8 +38,9 @@ jobs:
       run:
         working-directory: infrastructure/terraform
     env:
-      # Phrase secrète factice de 24 caractères uniquement pour la validation syntaxique CI
+      # Phrases secrètes factices uniquement pour la validation syntaxique CI
       TF_VAR_state_passphrase: "ci-validation-dummy-passphrase"
+      TF_VAR_adguard_password: "ci-validation-dummy-password"
     steps:
       - name: Checkout du code
         uses: actions/checkout@v7

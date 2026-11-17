@@ -4,7 +4,8 @@ title = "Configuration Gitleaks - Homelab DevSecOps"
 useDefault = true
 
 [allowlist]
-description = "Ignorer le modèle .env.example contenant uniquement des valeurs factices"
+description = "Ignorer le modèle .env.example et les manifestes Kubernetes déjà chiffrés par Mozilla SOPS / Age"
 paths = [
-  '''^\.env\.example$'''
+  '''^\.env\.example$''',
+  '''^cluster/.*\.sops\.ya?ml$'''
 ]
