@@ -4,3 +4,5 @@ kind: Kustomization
 resources:
   - cilium-l2.yml
   - piraeus-cluster.yaml
+  - cloudflare-secret.sops.yaml
+  - pki-letsencrypt.yaml

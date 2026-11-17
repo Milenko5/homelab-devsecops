@@ -14,6 +14,14 @@ terraform {
       source  = "hashicorp/local"
       version = "~> 2.9.1"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 4.52.0"
+    }
+    adguard = {
+      source  = "gmichels/adguard"
+      version = "~> 1.7.1"
+    }
   }
 
   # Fonctionnalité exclusive à OpenTofu : Chiffrement natif du State (DevSecOps)
@@ -36,6 +44,8 @@ terraform {
 }
 
 provider "incus" {
+  # Stocke le certificat client mTLS dans ~/.ssh/incus-client pour survivre aux rebuilds du DevContainer
+  config_dir                   = pathexpand("~/.ssh/incus-client")
   generate_client_certificates = true
   accept_remote_certificate    = true
 
@@ -63,3 +73,24 @@ provider "incus" {
 
 # Authentification automatique via la variable d'environnement GITHUB_TOKEN (.env)
 provider "github" {}
+
+# Authentification automatique via la variable d'environnement CLOUDFLARE_API_TOKEN (.env)
+provider "cloudflare" {}
+
+# Serveur DNS local AdGuard Home Primaire (172.16.16.5)
+provider "adguard" {
+  alias    = "primaire"
+  host     = var.adguard_host_1
+  username = var.adguard_username
+  password = var.adguard_password
+  scheme   = var.adguard_scheme
+}
+
+# Serveur DNS local AdGuard Home Secondaire (172.16.16.6)
+provider "adguard" {
+  alias    = "secondaire"
+  host     = var.adguard_host_2
+  username = var.adguard_username
+  password = var.adguard_password
+  scheme   = var.adguard_scheme
+}
