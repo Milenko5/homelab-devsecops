@@ -6,3 +6,4 @@ resources:
   - piraeus-cluster.yaml
   - cloudflare-secret.sops.yaml
   - pki-letsencrypt.yaml
+  - ingress-routes.yaml

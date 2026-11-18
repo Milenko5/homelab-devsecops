@@ -1,0 +1,72 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vault
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: vault
+  namespace: flux-system
+spec:
+  interval: 30m0s
+  targetNamespace: vault
+  releaseName: vault
+  chart:
+    spec:
+      chart: vault
+      version: ">= 0.28.0"
+      sourceRef:
+        kind: HelmRepository
+        name: hashicorp
+        namespace: flux-system
+      interval: 12h0m0s
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Désactivé conformément à l'ADR-0006 au profit d'External Secrets Operator (ESO)
+    injector:
+      enabled: false
+    ui:
+      enabled: true
+    server:
+      dataStorage:
+        enabled: true
+        size: 5Gi
+        storageClass: piraeus-storage-replicated
+      # Permet à FluxCD (wait: true) et à l'Ingress Traefik de router vers Vault
+      # même avant l'initialisation initiale (Day 0) ou lorsqu'un nœud est scellé (Sealed)
+      readinessProbe:
+        enabled: true
+        path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+      ha:
+        enabled: true
+        replicas: 3
+        raft:
+          enabled: true
+          setNodeId: true
+          config: |
+            ui = true
+            listener "tcp" {
+              tls_disable = 1
+              address = "[::]:8200"
+              cluster_address = "[::]:8201"
+            }
+            storage "raft" {
+              path = "/vault/data"
+              retry_join {
+                leader_api_addr = "http://vault-0.vault-internal:8200"
+              }
+              retry_join {
+                leader_api_addr = "http://vault-1.vault-internal:8200"
+              }
+              retry_join {
+                leader_api_addr = "http://vault-2.vault-internal:8200"
+              }
+            }
+            service_registration "kubernetes" {}
