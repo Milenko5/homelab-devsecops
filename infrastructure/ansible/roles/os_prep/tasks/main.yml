@@ -21,6 +21,20 @@
       - /proc/drbd
   changed_when: false
 
+- name: Création des périphériques /dev/loop0..63 et /dev/drbd1000..1063 dans le conteneur LXC (requis par LINSTOR / DRBD 9 sans udevd)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    [ -e /dev/loop-control ] || mknod -m 660 /dev/loop-control c 10 237
+    for i in $(seq 0 63); do
+      [ -e "/dev/loop$i" ] || mknod -m 660 "/dev/loop$i" b 7 "$i"
+    done
+    for i in $(seq 1000 1063); do
+      [ -e "/dev/drbd$i" ] || mknod -m 660 "/dev/drbd$i" b 147 "$i"
+    done
+  args:
+    executable: /bin/bash
+  changed_when: false
+
 - name: Montage du système de fichiers eBPF (requis par Cilium dans un conteneur LXC)
   ansible.posix.mount:
     path: /sys/fs/bpf
