@@ -6,3 +6,5 @@ resources:
   - piraeus-operator.yaml
   - cert-manager.yaml
   - traefik.yaml
+  - vault.yaml
+  - external-secrets.yaml

@@ -33,8 +33,8 @@ spec:
   values:
     crds:
       enabled: true
-    # Force la résolution DNS-01 sur les serveurs publics Cloudflare (1.1.1.1)
-    # pour éviter que le Split-Horizon DNS local (AdGuard Home) n'intercepte le challenge ACME
+    # Force la résolution DNS-01 en DNS-over-HTTPS (DoH :443) vers Cloudflare (1.1.1.1)
+    # pour éviter toute interception du port 53 par le pare-feu ou par le Split-Horizon AdGuard Home
     extraArgs:
-      - --dns01-recursive-nameservers=1.1.1.1:53,1.0.0.1:53
+      - --dns01-recursive-nameservers=https://1.1.1.1/dns-query,https://1.0.0.1/dns-query
       - --dns01-recursive-nameservers-only

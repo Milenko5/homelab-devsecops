@@ -1,0 +1,47 @@
+---
+# 1. Exposition HTTPS de HashiCorp Vault UI & API (https://vault.lab.sysdev.ca)
+#    Utilise automatiquement le certificat Wildcard Let's Encrypt du TLSStore par défaut de Traefik
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-ingress
+  namespace: vault
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: vault.lab.sysdev.ca
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vault-ui
+                port:
+                  number: 8200
+---
+# 2. Exposition HTTPS de Cilium Hubble UI - Observabilité eBPF (https://hubble.lab.sysdev.ca)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hubble-ui-ingress
+  namespace: kube-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: hubble.lab.sysdev.ca
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: hubble-ui
+                port:
+                  number: 80
