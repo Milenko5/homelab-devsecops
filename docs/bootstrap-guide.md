@@ -345,3 +345,46 @@ kubectl get svc -n traefik
 kubectl get clusterissuer,certificate,order,challenge -n traefik
 ```
 
+### Étape 6 : Initialisation du Quorum Raft de HashiCorp Vault HA et connexion d'External Secrets Operator (ESO)
+
+Une fois `vault-0`, `vault-1` et `vault-2` déployés par FluxCD sur leurs volumes répliqués DRBD 9 (`piraeus-storage-replicated`), initialisez le quorum Raft à 3 nœuds (les clés Shamir et le jeton root sont sauvegardés hors du dépôt Git dans `~/.ssh/vault-init.json`) :
+
+```bash
+# 1. Initialisation sur vault-0 (5 clés Shamir, seuil de 3)
+kubectl exec -n vault vault-0 -- vault operator init \
+  -key-shares=5 \
+  -key-threshold=3 \
+  -format=json > ~/.ssh/vault-init.json
+chmod 600 ~/.ssh/vault-init.json
+
+# 2. Déverrouillage de vault-0 et jointure/déverrouillage de vault-1 et vault-2 dans le quorum Raft
+UNSEAL_1=$(jq -r '.unseal_keys_b64[0]' ~/.ssh/vault-init.json)
+UNSEAL_2=$(jq -r '.unseal_keys_b64[1]' ~/.ssh/vault-init.json)
+UNSEAL_3=$(jq -r '.unseal_keys_b64[2]' ~/.ssh/vault-init.json)
+ROOT_TOKEN=$(jq -r '.root_token' ~/.ssh/vault-init.json)
+
+for key in "$UNSEAL_1" "$UNSEAL_2" "$UNSEAL_3"; do
+  kubectl exec -n vault vault-0 -- vault operator unseal "$key" >/dev/null
+done
+
+sleep 5
+for pod in vault-1 vault-2; do
+  kubectl exec -n vault "$pod" -- vault operator raft join http://vault-0.vault-internal:8200 || true
+  for key in "$UNSEAL_1" "$UNSEAL_2" "$UNSEAL_3"; do
+    kubectl exec -n vault "$pod" -- vault operator unseal "$key" >/dev/null
+  done
+done
+
+# 3. Vérification du quorum Raft (1 leader + 2 followers)
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault operator raft list-peers
+
+# 4. Configuration déclarative du moteur KV v2, de la politique eso-reader et de Kubernetes Auth
+chmod +x scripts/configurerVaultKubernetesAuth.sh
+./scripts/configurerVaultKubernetesAuth.sh
+
+# 5. Vérification du ClusterSecretStore et de la synchronisation ExternalSecret dans demo-app
+kubectl get clustersecretstore vault-backend
+kubectl get externalsecret,secret -n demo-app
+```
+
+

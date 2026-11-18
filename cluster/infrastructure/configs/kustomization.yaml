@@ -7,3 +7,4 @@ resources:
   - cloudflare-secret.sops.yaml
   - pki-letsencrypt.yaml
   - ingress-routes.yaml
+  - vault-secret-store.yaml

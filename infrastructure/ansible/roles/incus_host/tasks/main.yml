@@ -204,6 +204,14 @@
       drbd_transport_tcp
   tags: [os, drbd]
 
+- name: Configuration du paramètre noyau DRBD 9 (désactivation de usermode_helper requis en conteneurs LXC/K8s)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/drbd.conf
+    mode: "0644"
+    content: |
+      options drbd usermode_helper=disabled
+  tags: [os, drbd]
+
 - name: Déchargement du module DRBD v8 natif du noyau s'il était chargé avant DKMS
   ansible.builtin.shell: |
     if [ -f /proc/drbd ] && grep -q "version: 8\." /proc/drbd; then
@@ -238,6 +246,14 @@
       - grep
       - "version: 9."
       - /proc/drbd
+  changed_when: false
+  tags: [os, drbd]
+
+- name: Application immédiate de usermode_helper=disabled sur le module noyau DRBD actif
+  ansible.builtin.shell: |
+    echo disabled > /sys/module/drbd/parameters/usermode_helper
+  args:
+    executable: /bin/bash
   changed_when: false
   tags: [os, drbd]
 

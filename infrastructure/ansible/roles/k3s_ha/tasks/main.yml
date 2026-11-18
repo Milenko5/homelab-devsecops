@@ -21,6 +21,9 @@
       [Service]
       ExecStartPre=
       ExecStartPre=-/bin/sh -c 'if [ ! -e /dev/kmsg ]; then mknod -m 644 /dev/kmsg c 1 11 || ln -s /dev/console /dev/kmsg; fi'
+      ExecStartPre=-/bin/sh -c '[ -e /dev/loop-control ] || mknod -m 660 /dev/loop-control c 10 237'
+      ExecStartPre=-/bin/sh -c 'for i in $(seq 0 63); do [ -e /dev/loop$i ] || mknod -m 660 /dev/loop$i b 7 $i; done'
+      ExecStartPre=-/bin/sh -c 'for i in $(seq 1000 1063); do [ -e /dev/drbd$i ] || mknod -m 660 /dev/drbd$i b 147 $i; done'
       ExecStartPre=-/bin/mount --make-rshared /
       ExecStartPre=-/bin/sh -c 'mountpoint -q /proc/sys || mount --bind /proc/sys /proc/sys'
       ExecStartPre=-/bin/mount -o remount,rw /proc/sys
