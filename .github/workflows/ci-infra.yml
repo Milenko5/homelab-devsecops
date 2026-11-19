@@ -126,10 +126,12 @@ jobs:
           sudo tar -xzv -C /usr/local/bin flux -f "flux_${FLUX_VERSION}_linux_amd64.tar.gz"
           rm -f *.tar.gz CHECKSUMS *_checksums.txt
 
-      - name: Téléchargement des schémas CRD de FluxCD
+      - name: Téléchargement des schémas CRD de FluxCD (version épinglée)
         run: |
+          set -euo pipefail
+          FLUX_VERSION=$(grep '^ARG FLUX_VERSION=' .devcontainer/Dockerfile | cut -d'"' -f2)
           mkdir -p /tmp/flux-crd-schemas/master-standalone-strict
-          curl -fsSL https://github.com/fluxcd/flux2/releases/latest/download/crd-schemas.tar.gz | tar zxf - -C /tmp/flux-crd-schemas/master-standalone-strict
+          curl -fsSL "https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}/crd-schemas.tar.gz" | tar zxf - -C /tmp/flux-crd-schemas/master-standalone-strict
 
       - name: Validation des manifestes YAML (hors secrets chiffrés SOPS)
         run: |

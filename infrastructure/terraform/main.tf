@@ -15,7 +15,7 @@ resource "incus_profile" "profil_k3s" {
     "security.privileged" = "true"
     "security.nesting"    = "true"
     # Incus demande automatiquement à l'hôte physique de charger ces modules noyau
-    "linux.kernel_modules" = "br_netfilter,overlay,ip_tables,ip6_tables,netlink_diag,nf_nat,xt_conntrack,drbd,drbd_transport_tcp,dm_thin_pool,loop"
+    "linux.kernel_modules" = "br_netfilter,overlay,ip_tables,ip6_tables,netlink_diag,nf_nat,xt_conntrack,drbd,drbd_transport_tcp,dm_thin_pool,loop,wireguard"
     "raw.lxc"              = <<-EOT
       lxc.apparmor.profile = unconfined
       lxc.cgroup2.devices.allow = a

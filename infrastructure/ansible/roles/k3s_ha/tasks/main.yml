@@ -259,6 +259,9 @@
         --set hubble.enabled=true
         --set hubble.relay.enabled=true
         --set hubble.ui.enabled=true
+        --set encryption.enabled=true
+        --set encryption.type=wireguard
+        --set encryption.nodeEncryption=true
         --set rollOutCiliumPods=true
       register: k3s_ha_helm_cilium_deploy
       changed_when: "'STATUS: deployed' in k3s_ha_helm_cilium_deploy.stdout"

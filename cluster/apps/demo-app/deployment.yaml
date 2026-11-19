@@ -5,8 +5,8 @@ metadata:
   name: demo-app
   namespace: demo-app
   annotations:
-    checkov.io/skip1: "CKV_K8S_14=Le tag est muté automatiquement en digest @sha256 immuable par la politique Kyverno verifyImages à l'admission"
-    checkov.io/skip2: "CKV_K8S_43=Le digest @sha256 est résolu et vérifié cryptographiquement par Kyverno (mutateDigest: true) à l'admission"
+    checkov.io/skip1: "CKV_K8S_14=Image de démonstration continue vérifiée cryptographiquement à l'admission par Kyverno v1.20 CEL (ImageValidatingPolicy + ValidatingPolicy)"
+    checkov.io/skip2: "CKV_K8S_43=Signature Cosign Keyless OIDC et registre ghcr.io/milenko5/homelab-devsecops/* imposés en mode Deny par Kyverno v1.20 à l'admission"
 spec:
   replicas: 2
   selector:

@@ -10,3 +10,4 @@ resources:
   - external-secrets.yaml
   - kyverno.yaml
   - kube-prometheus-stack.yaml
+  - authentik.yaml

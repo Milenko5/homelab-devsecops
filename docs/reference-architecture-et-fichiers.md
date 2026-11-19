@@ -111,7 +111,7 @@ sequenceDiagram
 
 ### 2.2 Chaîne Supply Chain & Admission (Syft, Grype, Cosign, Kyverno CEL)
 
-Ce diagramme illustre le pipeline **Shift-Left -> Shield-Right** pour l'application `demo-app` (`ghcr.io/icpvs/homelab-devsecops/demo-app`).
+Ce diagramme illustre le pipeline **Shift-Left -> Shield-Right** pour l'application `demo-app` (`ghcr.io/milenko5/homelab-devsecops/demo-app`).
 
 ```mermaid
 sequenceDiagram
@@ -137,9 +137,9 @@ sequenceDiagram
     end
 
     Note over Kyv,K3s: Lors de la création d'un Pod dans le cluster
-    K3s->>Kyv: AdmissionReview (Pod ghcr.io/icpvs/homelab-devsecops/*)
+    K3s->>Kyv: AdmissionReview (Pod ghcr.io/milenko5/homelab-devsecops/*)
     Kyv->>GHCR: Récupère signature Cosign associée au Digest
-    Kyv->>Sig: Vérifie chaîne Fulcio + Log Rekor + Issuer GitHub OIDC + Repo icpvs/homelab-devsecops
+    Kyv->>Sig: Vérifie chaîne Fulcio + Log Rekor + Issuer GitHub OIDC + Repo Milenko5/homelab-devsecops
     alt Image non signée, modifiée ou mauvais dépôt
         Kyv--xK3s: DENY (Pod bloqué avant démarrage)
     else Signature & Identité OIDC valides
@@ -233,7 +233,7 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | Fichier | Rôle & Contenu Détaillé |
 | :--- | :--- |
 | **`.devcontainer/Dockerfile`** | **Source Unique de Vérité (SSOT)** des 12 outils CLI d'administration (`tofu`, `kubectl`, `helm`, `flux`, `cilium`, `sops`, `age`, `gitleaks`, `syft`, `grype`, `cosign`, `tflint`) ainsi que `ansible`, `ansible-lint`, `checkov`, `vim`, `jq`, `yq`. Construit sur **Ubuntu 26.04**, chaque binaire est téléchargé par version exacte et **vérifié cryptographiquement par somme `SHA-256`** avant installation. Les workflows CI lisent ce fichier dynamiquement pour rester 100 % synchronisés. |
-| **`.devcontainer/devcontainer.json`** | Configuration VS Code DevContainer : utilise l'image préconstruite GHCR (`ghcr.io/icpvs/homelab-devsecops/devcontainer:latest`), monte le dossier `~/.ssh` hôte (clé SSH Ed25519, `homelab.kubeconfig`, certificat mTLS `incus-client`), transmet l'agent GPG, et exécute `postStartCommand` pour restaurer automatiquement `~/.kube/config` et le certificat client Incus à chaque démarrage du conteneur. |
+| **`.devcontainer/devcontainer.json`** | Configuration VS Code DevContainer : utilise l'image préconstruite GHCR (`ghcr.io/milenko5/homelab-devsecops/devcontainer:latest`), monte le dossier `~/.ssh` hôte (clé SSH Ed25519, `homelab.kubeconfig`, certificat mTLS `incus-client`), transmet l'agent GPG, et exécute `postStartCommand` pour restaurer automatiquement `~/.kube/config` et le certificat client Incus à chaque démarrage du conteneur. |
 
 ---
 
@@ -318,8 +318,8 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | **`cloudflare-secret.sops.yaml`** | Secret Kubernetes chiffré par **SOPS/Age** contenant le jeton API Cloudflare (droits stricts `Zone:DNS:Edit` sur `sysdev.ca`) utilisé par Cert-Manager pour résoudre les défis ACME DNS-01. |
 | **`pki-letsencrypt.yaml`** | Contient 4 ressources PKI/Ingress clés : 1) `ClusterIssuer/letsencrypt-prod` (ACME Production DNS-01 Cloudflare), 2) `Certificate/wildcard-lab-sysdev-ca` (génère le certificat TLS pour `*.lab.sysdev.ca` et `lab.sysdev.ca`), 3) `TLSStore/default` (définit ce certificat Wildcard comme certificat par défaut de Traefik), 4) `IngressRoute/traefik-dashboard` (`https://traefik.lab.sysdev.ca/dashboard/`). |
 | **`vault-secret-store.yaml`** | Définit le **`ClusterSecretStore/vault-backend`** qui relie ESO au service interne `http://vault.vault.svc.cluster.local:8200` via la méthode **Kubernetes Auth** (`role: eso-role`, zéro jeton statique). |
-| **`ingress-routes.yaml`** | Expose en HTTPS les interfaces d'administration internes via `IngressRoute` Traefik : **`https://vault.lab.sysdev.ca`** (vers `vault:8200`), **`https://hubble.lab.sysdev.ca`** (vers `hubble-ui:80`) et **`https://grafana.lab.sysdev.ca`** (vers `kube-prometheus-stack-grafana:80`). |
-| **`kyverno-policies.yaml`** | Définit la politique **`ImageValidatingPolicy/verify-signed-images-homelab`** (`policies.kyverno.io/v1`, standard Kyverno v1.20 en langage **CEL**). Intercepte tous les Pods utilisant une image `ghcr.io/icpvs/homelab-devsecops/*` et impose (`validationActions: [Deny]`) une signature **Cosign Keyless OIDC** émise par GitHub Actions pour votre dépôt exact. |
+| **`ingress-routes.yaml`** | Expose en HTTPS les interfaces d'administration internes via `Ingress` Traefik : **`https://vault.lab.sysdev.ca`** (vers `vault-ui:8200`), **`https://hubble.lab.sysdev.ca`** (vers `hubble-ui:80`, protégé par Authentik ForwardAuth) et **`https://grafana.lab.sysdev.ca`** (vers `kube-prometheus-stack-grafana:80`). |
+| **`kyverno-policies.yaml`** | Définit la politique **`ImageValidatingPolicy/verify-signed-images-homelab`** (`policies.kyverno.io/v1`, standard Kyverno v1.20 en langage **CEL**). Intercepte tous les Pods utilisant une image `ghcr.io/milenko5/homelab-devsecops/*` et impose (`validationActions: [Deny]`) une signature **Cosign Keyless OIDC** émise par GitHub Actions pour votre dépôt exact. |
 
 ---
 
