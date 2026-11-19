@@ -54,7 +54,7 @@ jobs:
 
       - name: 5. Construction et publication de l'image Docker
         id: build-and-push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .devcontainer
           file: .devcontainer/Dockerfile
