@@ -1,7 +1,37 @@
 ---
-# Politique Zero-Trust d'Admission CEL (Kyverno v1.20+ - ADR-0007) :
-# Exige que toute image déployée dans le namespace 'demo-app' ait été signée sans clé (Keyless OIDC)
-# par le workflow officiel GitHub Actions (supply-chain.yml) via Sigstore Fulcio & Rekor
+# 1. Politique Zero-Trust d'Admission CEL (Kyverno v1.20+ - ADR-0007) :
+#    Exige que TOUTE image déployée dans 'demo-app' (containers, initContainers et ephemeralContainers)
+#    provienne exclusivement du registre GHCR du projet (empêche le contournement par image externe)
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-registries-demo-app
+spec:
+  validationActions:
+    - Deny
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: demo-app
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers +
+        object.spec.?initContainers.orValue([]) +
+        object.spec.?ephemeralContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c, c.image.startsWith("ghcr.io/milenko5/homelab-devsecops/"))
+      message: "Registre non autorisé : seules les images signées issues de ghcr.io/milenko5/homelab-devsecops/* sont admises dans ce namespace."
+---
+# 2. Politique Zero-Trust de Vérification Cryptographique (Kyverno v1.20+ - ADR-0007) :
+#    Exige que toute image (containers, initContainers, ephemeralContainers) du namespace 'demo-app'
+#    ait été signée sans clé (Keyless OIDC) par le workflow officiel supply-chain.yml via Sigstore Fulcio & Rekor
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
@@ -29,5 +59,5 @@ spec:
               subjectRegExp: "^https://github\\.com/[Mm]ilenko5/homelab-devsecops/\\.github/workflows/supply-chain\\.yml@refs/heads/main$"
   validations:
     - expression: >-
-        images.containers.map(image, verifyImageSignatures(image, [attestors.cosignkeyless])).all(e, e > 0)
+        (images.containers + images.initContainers + images.ephemeralContainers).map(image, verifyImageSignatures(image, [attestors.cosignkeyless])).all(e, e > 0)
       message: "Signature OIDC Sigstore Cosign absente ou invalide : l'image doit être signée par le workflow officiel supply-chain.yml."

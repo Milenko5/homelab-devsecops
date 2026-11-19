@@ -1,0 +1,40 @@
+---
+# Micro-segmentation Zero-Trust Cilium pour HashiCorp Vault (Raft HA) :
+# Bloque tout trafic entrant vers Vault sauf :
+# - Port 8200 (API/UI) : Traefik, External Secrets Operator, Monitoring et pairs Vault
+# - Port 8201 (Consensus Raft) : strictement entre les pods Vault du même namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-netpol
+  namespace: vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: external-secrets
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - protocol: TCP
+          port: 8200
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault
+      ports:
+        - protocol: TCP
+          port: 8201

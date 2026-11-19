@@ -61,7 +61,7 @@ func main() {
     <div class="row"><span class="label">UID / Profil PSA Kubernetes</span><span class="value">UID %d (Restricted / Read-Only RootFS)</span></div>
     <div class="row"><span class="label">Secret Dynamique HashiCorp Vault (DRBD 9)</span><span class="value">%s</span></div>
     <div class="row"><span class="label">Chaîne d'Approvisionnement OCI</span><span class="value">✅ Syft SBOM + Grype Scan + Cosign Keyless OIDC</span></div>
-    <div class="row"><span class="label">Contrôle d'Admission Runtime</span><span class="value">✅ Kyverno verifyImages (Enforce + Digest Mutation)</span></div>
+    <div class="row"><span class="label">Contrôle d'Admission Runtime</span><span class="value">✅ Kyverno v1.20 CEL (ImageValidatingPolicy + Registry Guard)</span></div>
     <div class="row"><span class="label">Horodatage Serveur (UTC)</span><span class="value">%s</span></div>
   </div>
 </body>

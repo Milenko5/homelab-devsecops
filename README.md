@@ -114,26 +114,12 @@ homelab-devsecops/
 
 | Service | Adresse HTTPS (Certificat Wildcard Let's Encrypt) | Rôle |
 | :--- | :--- | :--- |
+| **Authentik SSO** | `https://auth.lab.sysdev.ca` | Portail d'identité SSO & ForwardAuth (protège Traefik Dashboard & Hubble UI), secrets Vault/ESO |
 | **Application Zero-Trust** | `https://demo.lab.sysdev.ca` | Go 1.27 `FROM scratch`, signée Cosign OIDC, vérifiée par Kyverno CEL, secrets Vault/ESO |
 | **Grafana** | `https://grafana.lab.sysdev.ca` | Observabilité Prometheus/Kubernetes persistée sur DRBD 9, identifiants Vault/ESO |
-| **HashiCorp Vault** | `https://vault.lab.sysdev.ca` | Quorum Raft HA à 3 nœuds sur volumes répliqués DRBD 9 (`3 × 5 Gi`) |
-| **Cilium Hubble UI** | `https://hubble.lab.sysdev.ca` | Observabilité des flux réseau eBPF L3/L4/L7 en temps réel |
-| **Traefik Dashboard** | `https://traefik.lab.sysdev.ca/dashboard/` | Contrôleur Ingress HA exposé sur VIP Cilium L2 (`172.16.17.20`) |
-│   └── terraform/                  # Niveau 1 : API Incus (main.tf), Rulesets & Permissions GitHub (github.tf), DNS Cloudflare/AdGuard (dns.tf)
-└── scripts/                        # Utilitaires (gestion clés GPG, chiffrement mémoire SOPS Cloudflare, Vault Kubernetes Auth)
-```
-
----
-
-## 🌐 Portails HTTPS Actifs (`*.lab.sysdev.ca`)
-
-| Service | Adresse HTTPS (Certificat Wildcard Let's Encrypt) | Rôle |
-| :--- | :--- | :--- |
-| **Application Zero-Trust** | `https://demo.lab.sysdev.ca` | Go 1.27 `FROM scratch`, signée Cosign OIDC, vérifiée par Kyverno CEL, secrets Vault/ESO |
-| **Grafana** | `https://grafana.lab.sysdev.ca` | Observabilité Prometheus/Kubernetes persistée sur DRBD 9, identifiants Vault/ESO |
-| **HashiCorp Vault** | `https://vault.lab.sysdev.ca` | Quorum Raft HA à 3 nœuds sur volumes répliqués DRBD 9 (`3 × 5 Gi`) |
-| **Cilium Hubble UI** | `https://hubble.lab.sysdev.ca` | Observabilité des flux réseau eBPF L3/L4/L7 en temps réel |
-| **Traefik Dashboard** | `https://traefik.lab.sysdev.ca/dashboard/` | Contrôleur Ingress HA exposé sur VIP Cilium L2 (`172.16.17.20`) |
+| **HashiCorp Vault** | `https://vault.lab.sysdev.ca` | Quorum Raft HA à 3 nœuds sur volumes répliqués DRBD 9 (`3 × 5 Gi`), micro-segmenté par `NetworkPolicy` |
+| **Cilium Hubble UI** | `https://hubble.lab.sysdev.ca` | Observabilité des flux réseau eBPF L3/L4/L7 (protégé par Authentik ForwardAuth) |
+| **Traefik Dashboard** | `https://traefik.lab.sysdev.ca/dashboard/` | Contrôleur Ingress HA sur VIP Cilium L2 `172.16.17.20` (protégé par Authentik ForwardAuth) |
 
 ---
 
