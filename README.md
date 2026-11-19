@@ -99,7 +99,7 @@ homelab-devsecops/
 │   ├── clusters/homelab/           # Point d'entrée FluxCD (vérification GPG sur HEAD + déchiffrement SOPS/Age)
 │   ├── infrastructure/             # Contrôleurs (Piraeus, Cert-Manager, Traefik, Vault, ESO, Kyverno, Prometheus/Grafana) & configs
 │   └── apps/                       # Application de démonstration Go 1.27 FROM scratch (PSA Restricted, NetworkPolicy, Vault ESO)
-├── docs/                           # Runbook Jour 0 et Architecture Decision Records (ADR-0001 à ADR-0009)
+├── docs/                           # Guides (Jour 0, Administration Jour 2, Référence Architecture & Fichiers) et ADR-0001 à ADR-0009
 ├── infrastructure/
 │   ├── ansible/                    # Niveau 0 (Hôtes Ubuntu 26.04, DRBD 9 DKMS, Incus 7.5) & Niveau 2 (Quorum K3s HA + Cilium)
 │   └── terraform/                  # Niveau 1 : API Incus (main.tf), Rulesets & Permissions GitHub (github.tf), DNS Cloudflare/AdGuard (dns.tf)
@@ -123,6 +123,8 @@ homelab-devsecops/
 ## 📚 Documentation & Décisions Architecturales (ADR)
 
 - 🚀 **[Guide d'amorçage (Jour 0) et Runbook d'initialisation](docs/bootstrap-guide.md)**
+- 🛠️ **[Guide d'Administration & Usage au Quotidien (Jour 2)](docs/guide-administration-quotidienne.md)** *(ajout/suppression d'apps, CPU/RAM, scaling, Traefik, certificats TLS, Vault/ESO, DRBD 9, dépannage)*
+- 🧠 **[Référence Architecturale Complète & Anatomie du Dépôt](docs/reference-architecture-et-fichiers.md)** *(liens entre composants, 4 diagrammes de séquence MermaidJS, explication de chaque fichier, défense DevSecOps)*
 
 | Référence | Décision Architecturale | Statut |
 | :--- | :--- | :--- |
@@ -135,4 +137,3 @@ homelab-devsecops/
 | **[ADR-0007](docs/Architecture%20Decision%20Records/ADR-0007-securite-chaine-approvisionnement.md)** | Sécurité de la Supply Chain (**GPG**, **Gitleaks**, **Checkov**, **Anchore Syft/Grype**, **Cosign**, **Kyverno**) | Accepté |
 | **[ADR-0008](docs/Architecture%20Decision%20Records/ADR-0008-stockage-distribue.md)** | Système de stockage distribué en espace noyau (**Piraeus Operator v2 / LINSTOR & DRBD 9**) | Accepté |
 | **[ADR-0009](docs/Architecture%20Decision%20Records/ADR-0009-environnement-administration.md)** | Environnement d'administration isolé, reproductible et vérifié par SHA-256 (**DevContainer**) | Accepté |
-
