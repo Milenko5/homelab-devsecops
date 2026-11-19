@@ -56,6 +56,13 @@ resource "github_repository_vulnerability_alerts" "homelab_alerts" {
   repository = github_repository.homelab.name
 }
 
+# 1.c Permissions par défaut de GitHub Actions (Moindre privilège 'read' + autorisation de création de PR automatisées)
+resource "github_workflow_repository_permissions" "homelab_actions_permissions" {
+  repository                       = github_repository.homelab.name
+  default_workflow_permissions     = "read"
+  can_approve_pull_request_reviews = true
+}
+
 # -----------------------------------------------------------------------------
 # 2. Ruleset : Verrouillage Zero-Trust de la branche principale (main)
 #    Aucun bypass_actors : Même l'admin doit passer par une PR signée GPG + CI verte
