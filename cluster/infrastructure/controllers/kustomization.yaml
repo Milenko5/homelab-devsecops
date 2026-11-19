@@ -9,3 +9,4 @@ resources:
   - vault.yaml
   - external-secrets.yaml
   - kyverno.yaml
+  - kube-prometheus-stack.yaml

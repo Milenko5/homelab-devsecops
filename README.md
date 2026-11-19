@@ -19,19 +19,21 @@ Bienvenue sur le dépôt de mon infrastructure "Homelab" orientée DevSecOps. L'
     
 - **Orchestration :** Kubernetes (K3s).
     
-- **Réseau, DNS & Ingress :** Cilium (eBPF) avec L2 Announcements / Split-Horizon DNS (Cloudflare Free + AdGuard Home HA gérés par OpenTofu) / Ingress Traefik v3 (`*.lab.sysdev.ca`).
+- **Réseau, DNS & Ingress :** Cilium (eBPF) avec L2 Announcements & Hubble UI (`https://hubble.lab.sysdev.ca`) / Split-Horizon DNS (Cloudflare Free + AdGuard Home HA gérés par OpenTofu) / Ingress Traefik v3 (`https://traefik.lab.sysdev.ca/dashboard/`).
     
-- **PKI & Certificats TLS :** Cert-Manager avec Let's Encrypt Production (Défi `DNS-01` Cloudflare et certificat Wildcard mutualisé via `TLSStore`).
+- **PKI & Certificats TLS :** Cert-Manager avec Let's Encrypt Production (Défi `DNS-01` Cloudflare en DNS-over-HTTPS et certificat Wildcard `*.lab.sysdev.ca` mutualisé via `TLSStore`).
     
 - **Stockage Distribué :** Piraeus Operator v2 (LINSTOR / DRBD 9 en espace noyau — Réplication synchrone 3x).
     
+- **Observabilité & Métriques :** `kube-prometheus-stack` (Prometheus + Grafana persistés sur volumes répliqués DRBD 9 et exposés sur `https://grafana.lab.sysdev.ca`).
+    
 - **Automatisation (IaC) :** Terraform/OpenTofu (avec chiffrement natif du `.tfstate` en AES-GCM) & Ansible.
     
-- **GitOps :** FluxCD (avec vérification cryptographique GPG du commit `HEAD` et d'`origin/main` en cluster).
+- **GitOps :** FluxCD (avec vérification cryptographique GPG du commit `HEAD` d'`origin/main` en cluster).
     
-- **Gestion des Secrets :** Mozilla SOPS (Age) & HashiCorp Vault.
+- **Gestion des Secrets :** Mozilla SOPS (Age) & HashiCorp Vault Raft HA (`https://vault.lab.sysdev.ca`) + External Secrets Operator (ESO).
     
-- **Sécurité de la Chaîne d'Approvisionnement :** Signature Git OpenPGP (GPG), Gitleaks, Checkov, Anchore (Syft & Grype), Sigstore (Cosign), Kyverno.
+- **Sécurité de la Chaîne d'Approvisionnement :** Signature Git OpenPGP (GPG), Gitleaks, Checkov, Anchore (Syft & Grype), Sigstore (Cosign Keyless OIDC), Kyverno v1.20 (`ImageValidatingPolicy` CEL) & Application de démonstration `FROM scratch` (`https://demo.lab.sysdev.ca`).
     
 
 ## 📐 Architecture Logique et Réseau

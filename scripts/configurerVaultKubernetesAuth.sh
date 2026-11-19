@@ -50,4 +50,12 @@ kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
     password="$(openssl rand -base64 24)" \
     db_host="postgres.demo-app.svc.cluster.local"
 
+echo "7. Injection des identifiants administrateur Grafana dans Vault (secret/monitoring/grafana)..."
+if ! kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" vault kv get secret/monitoring/grafana >/dev/null 2>&1; then
+  kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
+    vault kv put secret/monitoring/grafana \
+      admin_user="admin" \
+      admin_password="$(openssl rand -base64 18)"
+fi
+
 echo "✅ HashiCorp Vault est configuré avec Kubernetes Auth et prêt pour External Secrets Operator (ESO) !"

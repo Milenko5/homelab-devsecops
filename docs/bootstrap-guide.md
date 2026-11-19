@@ -382,9 +382,29 @@ kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault operator ra
 chmod +x scripts/configurerVaultKubernetesAuth.sh
 ./scripts/configurerVaultKubernetesAuth.sh
 
-# 5. Vérification du ClusterSecretStore et de la synchronisation ExternalSecret dans demo-app
+# 5. Vérification du ClusterSecretStore et de la synchronisation ExternalSecret dans demo-app et monitoring
 kubectl get clustersecretstore vault-backend
 kubectl get externalsecret,secret -n demo-app
+kubectl get externalsecret,secret -n monitoring
 ```
+
+### Étape 7 : Vérification de la Supply Chain Zero-Trust (Kyverno CEL) et de l'Observabilité (Prometheus & Grafana)
+
+```bash
+# 1. Vérifier que la politique CEL ImageValidatingPolicy de Kyverno v1.20 est active
+kubectl get imagevalidatingpolicy
+
+# 2. Tester en direct le rejet par Kyverno d'une image non signée par Cosign OIDC (doit être refusé)
+kubectl run test-intrusion -n demo-app --image=ghcr.io/milenko5/homelab-devsecops/image-non-signee:latest --restart=Never --dry-run=server
+
+# 3. Vérifier l'application de démonstration signée (https://demo.lab.sysdev.ca) et la pile Prometheus/Grafana (https://grafana.lab.sysdev.ca)
+kubectl get pods,svc,ingress -n demo-app
+kubectl get pods,pvc,ingress -n monitoring
+
+# 4. Récupérer le mot de passe administrateur Grafana généré dans HashiCorp Vault
+ROOT_TOKEN=$(jq -r '.root_token' ~/.ssh/vault-init.json)
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault kv get secret/monitoring/grafana
+```
+
 
 

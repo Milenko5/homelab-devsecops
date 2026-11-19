@@ -1,0 +1,100 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+# Synchronisation automatique du mot de passe administrateur Grafana depuis HashiCorp Vault via ESO
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: grafana-admin-secret
+  namespace: monitoring
+spec:
+  refreshInterval: 15m0s
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: grafana-admin-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: admin-user
+      remoteRef:
+        key: monitoring/grafana
+        property: admin_user
+    - secretKey: admin-password
+      remoteRef:
+        key: monitoring/grafana
+        property: admin_password
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: flux-system
+spec:
+  interval: 30m0s
+  timeout: 10m0s
+  targetNamespace: monitoring
+  releaseName: kube-prometheus-stack
+  dependsOn:
+    - name: external-secrets
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: ">= 69.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: flux-system
+      interval: 12h0m0s
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Désactivé car kube-proxy est remplacé à 100 % par Cilium eBPF (ADR-0004)
+    kubeProxy:
+      enabled: false
+    # Compatibilité conteneurs système Incus/LXC (évite l'erreur mountPropagation HostToContainer sur /)
+    prometheus-node-exporter:
+      hostRootFsMount:
+        enabled: false
+    alertmanager:
+      enabled: false
+    grafana:
+      enabled: true
+      admin:
+        existingSecret: grafana-admin-credentials
+        userKey: admin-user
+        passwordKey: admin-password
+      persistence:
+        enabled: true
+        storageClassName: piraeus-storage-replicated
+        accessModes:
+          - ReadWriteOnce
+        size: 2Gi
+    prometheus:
+      prometheusSpec:
+        retention: 7d
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1536Mi
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: piraeus-storage-replicated
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 10Gi
