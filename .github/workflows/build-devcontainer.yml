@@ -69,7 +69,9 @@ jobs:
       - name: 6. Installation et vérification SHA-256 des binaires Anchore Syft et Grype (Hard-Fail)
         run: |
           set -euo pipefail
-          curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.gz" 2>/dev/null || \
+          SYFT_VERSION=$(grep '^ARG SYFT_VERSION=' .devcontainer/Dockerfile | cut -d'"' -f2)
+          GRYPE_VERSION=$(grep '^ARG GRYPE_VERSION=' .devcontainer/Dockerfile | cut -d'"' -f2)
+
           curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
           curl -fsSLO "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt"
           sha256sum -c --ignore-missing "syft_${SYFT_VERSION}_checksums.txt"
@@ -89,8 +91,8 @@ jobs:
 
       - name: 8. Barrière de sécurité CVE obligatoire avec Grype (Fail-Fast sur Critical)
         run: |
-          # Coupe immédiatement le pipeline (exit 1) et empêche la signature Cosign si une CVE critique corrigée est détectée
-          grype sbom:./devcontainer-sbom.spdx.json --only-fixed --fail-on critical
+          # Coupe immédiatement le pipeline (exit 1) et empêche la signature Cosign si une CVE critique non documentée dans .grype.yaml (VEX) est détectée
+          grype sbom:./devcontainer-sbom.spdx.json -c .grype.yaml --only-fixed --fail-on critical
 
       - name: 9. Installation de Sigstore Cosign
         uses: sigstore/cosign-installer@v4.1.3
