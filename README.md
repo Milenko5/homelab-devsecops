@@ -95,6 +95,8 @@ P -.->|Challenge TXT DNS-01| CF
 homelab-devsecops/
 ├── .devcontainer/                  # Boîte à outils immuable Ubuntu 26.04 (Source Unique de Vérité des 12 outils CLI vérifiés SHA-256)
 ├── .github/workflows/              # 4 Pipelines CI/CD : ci-infra, supply-chain, build-devcontainer (audit local strict), update-cli-tools (PR GPG)
+├── .devcontainer/                  # Boîte à outils immuable Ubuntu 26.04 (Source Unique de Vérité des 12 outils CLI vérifiés SHA-256)
+├── .github/workflows/              # 4 Pipelines CI/CD : ci-infra, supply-chain, build-devcontainer (audit local strict), update-cli-tools (PR GPG)
 ├── cluster/                        # État désiré Kubernetes synchronisé par FluxCD (GitOps)
 │   ├── clusters/homelab/           # Point d'entrée FluxCD (vérification GPG sur HEAD + déchiffrement SOPS/Age)
 │   ├── infrastructure/             # Contrôleurs (Piraeus, Cert-Manager, Traefik, Vault, ESO, Kyverno, Prometheus/Grafana) & configs
@@ -102,6 +104,21 @@ homelab-devsecops/
 ├── docs/                           # Guides (Jour 0, Administration Jour 2, Référence Architecture & Fichiers) et ADR-0001 à ADR-0009
 ├── infrastructure/
 │   ├── ansible/                    # Niveau 0 (Hôtes Ubuntu 26.04, DRBD 9 DKMS, Incus 7.5) & Niveau 2 (Quorum K3s HA + Cilium)
+│   └── terraform/                  # Niveau 1 : API Incus (main.tf), Rulesets & Permissions GitHub (github.tf), DNS Cloudflare/AdGuard (dns.tf)
+└── scripts/                        # Utilitaires (gestion clés GPG, chiffrement mémoire SOPS Cloudflare, Vault Kubernetes Auth)
+```
+
+---
+
+## 🌐 Portails HTTPS Actifs (`*.lab.sysdev.ca`)
+
+| Service | Adresse HTTPS (Certificat Wildcard Let's Encrypt) | Rôle |
+| :--- | :--- | :--- |
+| **Application Zero-Trust** | `https://demo.lab.sysdev.ca` | Go 1.27 `FROM scratch`, signée Cosign OIDC, vérifiée par Kyverno CEL, secrets Vault/ESO |
+| **Grafana** | `https://grafana.lab.sysdev.ca` | Observabilité Prometheus/Kubernetes persistée sur DRBD 9, identifiants Vault/ESO |
+| **HashiCorp Vault** | `https://vault.lab.sysdev.ca` | Quorum Raft HA à 3 nœuds sur volumes répliqués DRBD 9 (`3 × 5 Gi`) |
+| **Cilium Hubble UI** | `https://hubble.lab.sysdev.ca` | Observabilité des flux réseau eBPF L3/L4/L7 en temps réel |
+| **Traefik Dashboard** | `https://traefik.lab.sysdev.ca/dashboard/` | Contrôleur Ingress HA exposé sur VIP Cilium L2 (`172.16.17.20`) |
 │   └── terraform/                  # Niveau 1 : API Incus (main.tf), Rulesets & Permissions GitHub (github.tf), DNS Cloudflare/AdGuard (dns.tf)
 └── scripts/                        # Utilitaires (gestion clés GPG, chiffrement mémoire SOPS Cloudflare, Vault Kubernetes Auth)
 ```
