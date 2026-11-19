@@ -46,9 +46,10 @@ Le homelab repose sur une **séparation stricte en 4 niveaux** (*Layered Archite
 | :--- | :--- | :--- |
 | `172.16.16.5` / `172.16.16.6` | **AdGuard Home HA** (Externe) | DNS interne Split-Horizon : résout `*.lab.sysdev.ca` -> `172.16.17.20`. Géré par OpenTofu (`dns.tf`). |
 | `172.16.17.240` / `.241` / `.242` | **Hôtes physiques Intel x86_64** | 3 × 16 Go RAM, Ubuntu 26.04 LTS, Incus 7.5 (API mTLS `:8443`), module noyau `drbd` (DRBD 9.3.1). |
-| `172.16.17.221` / `.222` / `.223` | **`k3s-srv-01` / `02` / `03`** | Conteneurs système Incus LXC privilégiés sur bridge `br0`. Quorum `etcd` + API K8s (`:6443`) + Satellites LINSTOR/DRBD 9. |
-| `172.16.17.20` | **VIP Cilium L2 — Traefik** | IP virtuelle annoncée en ARP par Cilium L2 (`CiliumLoadBalancerIPPool` `.20-.40`). Point d'entrée unique HTTP/HTTPS (`80`/`443`). |
-| `172.16.17.21` à `.40` | **Pool VIP Cilium L2** | Réservé pour d'éventuels Services `LoadBalancer` non-HTTP (PostgreSQL, MQTT, SSH, etc.). |
+| `172.16.17.220` | **VIP HA Keepalived — API K3s** | IP virtuelle VRRP Unicast basculant entre `k3s-srv-01/02/03` (< 2 s). Cible unique de `kubectl`, des nœuds K3s et de Cilium `k8sServiceHost` (`:6443`). |
+| `172.16.17.221` / `.222` / `.223` | **`k3s-srv-01` / `02` / `03`** | Conteneurs système Incus LXC privilégiés sur bridge `br0`. Quorum `etcd` (secrets chiffrés au repos) + API K8s (`:6443`) + Satellites LINSTOR/DRBD 9 + Cilium WireGuard. |
+| `172.16.17.20` | **VIP Cilium L2 — Traefik** | IP virtuelle annoncée en ARP par Cilium L2 (`CiliumLoadBalancerIPPool` `.20–.219`). Point d'entrée unique HTTP/HTTPS (`80`/`443`). |
+| `172.16.17.21` à `.219` | **Pool VIP Cilium L2** | Réservé pour d'éventuels Services `LoadBalancer` non-HTTP (PostgreSQL, MQTT, SSH, etc.). |
 
 ### Matrice des Dépendances entre Contrôleurs du Cluster
 
@@ -124,13 +125,13 @@ sequenceDiagram
     participant Kyv as Kyverno v1.20 (ImageValidatingPolicy)
     participant K3s as Kubelet (K3s)
 
-    GH->>Docker: Compile binaire statique Go (CGO_ENABLED=0) dans FROM scratch
-    Docker->>GHCR: Push image identifiée par Digest SHA-256
-    GH->>Scan: Syft génère SBOM (SPDX JSON) de l'image
+    GH->>Docker: Build LOCAL (load: true, push: false) Go 1.27 -> FROM scratch
+    GH->>Scan: Syft génère SBOM (SPDX JSON) sur l'image locale
     GH->>Scan: Grype scanne le SBOM (--only-fixed --fail-on critical)
     alt CVE Critique corrigée détectée
-        Scan--xGH: EXIT 1 (Pipeline coupé avant la signature Cosign !)
+        Scan--xGHCR: EXIT 1 (Pipeline coupé AVANT tout push GHCR ni signature !)
     else 0 CVE Critique
+        Docker->>GHCR: Push image validée (Digest SHA-256)
         GH->>Sig: Demande certificat éphémère via OIDC GitHub Actions
         Sig-->>GH: Certificat X.509 Fulcio (valide ~10 min) + Entrée Rekor
         GH->>GHCR: Cosign attache Signature + Attestation SBOM sur le Digest
@@ -276,7 +277,7 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | **`roles/incus_host/tasks/main.yml`** | Installe et configure **Incus 7.5** (bridge réseau `br0`, API HTTPS `:8443`), installe **DRBD 9 DKMS** (`drbd-dkms`, `drbd-utils`) sur le noyau des hôtes physiques, charge le module `drbd` au démarrage, et configure **`options drbd usermode_helper=disabled`** dans `/etc/modprobe.d/drbd.conf` (indispensable pour que DRBD 9 fonctionne dans des LXC sans que le noyau hôte ne tente d'exécuter les scripts helpers côté hôte). |
 | **`roles/incus_host/handlers/main.yml`** | Handlers Ansible (`systemd-sysctl`, redémarrage service Incus) déclenchés uniquement en cas de changement de configuration. |
 | **`roles/os_prep/tasks/main.yml`** | Prépare les 3 LXC K3s : désactive le swap, configure les paramètres `sysctl` réseau, installe les paquets utilitaires, et **pré-crée les nœuds de périphériques `/dev/loop0..63` et `/dev/drbd1000..1063`** (plus la règle persistante `tmpfiles.d` `10-incus-lxc.conf`) afin que LINSTOR/Piraeus puisse créer des volumes thin-provisioned DRBD 9 à chaud dans LXC. |
-| **`roles/k3s_ha/tasks/main.yml`** | Déploie **K3s HA** avec `etcd` embarqué (`--cluster-init` sur `k3s-srv-01`, puis jonction de `02` et `03`), en désactivant Flannel (`--flannel-backend=none`), `kube-proxy` (`--disable-kube-proxy`), Traefik intégré (`--disable=traefik`) et ServiceLB (`--disable=servicelb`). Installe ensuite **Cilium eBPF** via Helm avec remplacement complet de `kube-proxy`, **L2 Announcements** activé et **Hubble UI** activé. |
+| **`roles/k3s_ha/tasks/main.yml` & `handlers/main.yml`** | Déploie **Keepalived (VRRP Unicast)** sur `eth0` pour la VIP HA API **`172.16.17.220:6443`**, puis initialise **K3s HA** avec `etcd` embarqué, **`secrets-encryption: true`** (synchronisation automatique de `encryption-config.json`), **`write-kubeconfig-mode: "0600"`**, et `tls-san` complet (VIP + 3 nœuds), en désactivant Flannel, `kube-proxy`, Traefik intégré et ServiceLB. Installe **Cilium eBPF** via Helm sur `k8sServiceHost=172.16.17.220` avec **chiffrement transparent WireGuard** (`encryption.enabled=true`, `nodeEncryption=true`), **L2 Announcements** et **Hubble UI**. |
 
 ---
 
@@ -304,7 +305,8 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | **`vault.yaml`** | Déploie **HashiCorp Vault** en mode **HA Raft (3 réplicas)** dans `vault` sur volumes `piraeus-storage-replicated` (`3 × 5 Gi`). Désactive le sidecar injector (`injector.enabled: false` car remplacé par ESO), active l'interface Web UI, et configure la `readinessProbe` avec `sealedcode=204&uninitcode=204` pour permettre l'initialisation/unseal via l'UI même quand Vault est scellé. |
 | **`external-secrets.yaml`** | Déploie **External Secrets Operator (ESO)** dans `external-secrets` avec installation des CRDs. Permet de synchroniser des secrets depuis Vault vers des Secrets Kubernetes natifs sans jamais stocker de secrets en Git. |
 | **`kyverno.yaml`** | Déploie **Kyverno v1.20** (`chart >= 3.3.0`) dans `kyverno` (contrôleurs admission, background, cleanup, reports) pour faire respecter les politiques de sécurité à l'admission. |
-| **`kube-prometheus-stack.yaml`** | Déploie **Prometheus + Grafana + Alertmanager + Node-Exporter + Kube-State-Metrics** dans `monitoring`. Configure : persistance Prometheus (`10Gi`) et Grafana (`2Gi`) sur `piraeus-storage-replicated`, désactivation de `kubeProxy` (remplacé par Cilium), `hostRootFsMount.enabled: false` (compatibilité LXC), et récupération du mot de passe admin Grafana depuis Vault via un `ExternalSecret` (`grafana-admin-credentials`). |
+| **`kube-prometheus-stack.yaml`** | Déploie **Prometheus + Grafana + Node-Exporter + Kube-State-Metrics** dans `monitoring`. Configure : persistance Prometheus (`10Gi`) et Grafana (`2Gi`) sur `piraeus-storage-replicated`, désactivation de `kubeProxy` (remplacé par Cilium), `hostRootFsMount.enabled: false` (compatibilité LXC), et récupération du mot de passe admin Grafana depuis Vault via un `ExternalSecret` (`grafana-admin-credentials`). |
+| **`authentik.yaml`** | Déploie **Authentik SSO** (100 % GitOps / Zéro-ClickOps) dans `authentik` : `ExternalSecret/authentik-secrets` (clé secrète, PostgreSQL & identifiants `akadmin` tirés de Vault), `ConfigMap/authentik-homelab-blueprint` (Blueprint déclaratif provisionnant automatiquement le `ProxyProvider` `homelab-domain-auth` et l'attachement à l'Embedded Outpost), et `HelmRelease` avec PostgreSQL persisté (`4Gi` sur `piraeus-storage-replicated`). |
 
 ---
 
@@ -313,13 +315,15 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | Fichier | Rôle & Contenu Détaillé |
 | :--- | :--- |
 | **`kustomization.yaml`** | Liste toutes les configurations appliquées une fois les contrôleurs et leurs CRDs opérationnels. |
-| **`cilium-l2.yml`** | Configure le LoadBalancing Bare-Metal de Cilium : un `CiliumLoadBalancerIPPool` (`172.16.17.20` à `172.16.17.40`) et une `CiliumL2AnnouncementPolicy` permettant aux 3 nœuds K3s d'annoncer ces IPs en ARP sur le LAN. |
-| **`piraeus-cluster.yaml`** | Crée le **`LinstorCluster`** et le **`LinstorSatelliteConfiguration`** (qui configure le pool de stockage `fileThinPool` nommé `pool1` sur `/var/lib/linstor-storage` dans chaque LXC), ainsi que la **`StorageClass` `piraeus-storage-replicated`** (`placementCount: "3"`, réplication synchrone 3x, `allowVolumeExpansion: true`). |
+| **`cilium-l2.yml`** | Configure le LoadBalancing Bare-Metal de Cilium : un `CiliumLoadBalancerIPPool` (`172.16.17.20` à `172.16.17.219`, excluant `.220` réservée à Keepalived) et une `CiliumL2AnnouncementPolicy` permettant aux 3 nœuds K3s d'annoncer ces IPs en ARP sur le LAN. |
+| **`piraeus-cluster.yaml`** | Crée le **`LinstorCluster`**, le **`LinstorSatelliteConfiguration`** (`fileThinPool` `pool1`), et **2 `StorageClass`** : **`piraeus-storage-replicated`** (`placementCount: "3"`, par défaut, pour workloads mono-instance) et **`piraeus-storage-local`** (`placementCount: "1"`, pour bases HA à consensus interne évitant l'amplification 9×). |
 | **`cloudflare-secret.sops.yaml`** | Secret Kubernetes chiffré par **SOPS/Age** contenant le jeton API Cloudflare (droits stricts `Zone:DNS:Edit` sur `sysdev.ca`) utilisé par Cert-Manager pour résoudre les défis ACME DNS-01. |
-| **`pki-letsencrypt.yaml`** | Contient 4 ressources PKI/Ingress clés : 1) `ClusterIssuer/letsencrypt-prod` (ACME Production DNS-01 Cloudflare), 2) `Certificate/wildcard-lab-sysdev-ca` (génère le certificat TLS pour `*.lab.sysdev.ca` et `lab.sysdev.ca`), 3) `TLSStore/default` (définit ce certificat Wildcard comme certificat par défaut de Traefik), 4) `IngressRoute/traefik-dashboard` (`https://traefik.lab.sysdev.ca/dashboard/`). |
-| **`vault-secret-store.yaml`** | Définit le **`ClusterSecretStore/vault-backend`** qui relie ESO au service interne `http://vault.vault.svc.cluster.local:8200` via la méthode **Kubernetes Auth** (`role: eso-role`, zéro jeton statique). |
+| **`pki-letsencrypt.yaml`** | Contient 4 ressources PKI/Ingress clés : 1) `ClusterIssuer/letsencrypt-prod` (ACME Production DNS-01 Cloudflare), 2) `Certificate/wildcard-lab-sysdev-ca` (`*.lab.sysdev.ca` et `lab.sysdev.ca`), 3) `TLSStore/default` (certificat Wildcard par défaut de Traefik), 4) `IngressRoute/traefik-dashboard` (`https://traefik.lab.sysdev.ca/dashboard/`, protégé par le middleware `authentik-forward-auth`). |
+| **`vault-secret-store.yaml`** | Définit le **`ClusterSecretStore/vault-backend`** qui relie ESO au service interne `http://vault.vault.svc.cluster.local:8200` via la méthode **Kubernetes Auth** (`role: external-secrets`, zéro jeton statique). |
+| **`vault-netpol.yaml`** | `NetworkPolicy` micro-segmentant le namespace `vault` : bloque tout trafic entrant sauf `:8200` depuis `traefik`, `external-secrets`, `monitoring` et les pairs `vault`, et `:8201` (Raft) strictement entre pods `vault`. |
+| **`authentik-middleware.yaml`** | Expose le portail SSO **`https://auth.lab.sysdev.ca`** (`Ingress`) et déclare le `Middleware` Traefik **`authentik-forward-auth`** (cross-namespace) pointant vers l'Embedded Outpost interne d'Authentik. |
 | **`ingress-routes.yaml`** | Expose en HTTPS les interfaces d'administration internes via `Ingress` Traefik : **`https://vault.lab.sysdev.ca`** (vers `vault-ui:8200`), **`https://hubble.lab.sysdev.ca`** (vers `hubble-ui:80`, protégé par Authentik ForwardAuth) et **`https://grafana.lab.sysdev.ca`** (vers `kube-prometheus-stack-grafana:80`). |
-| **`kyverno-policies.yaml`** | Définit la politique **`ImageValidatingPolicy/verify-signed-images-homelab`** (`policies.kyverno.io/v1`, standard Kyverno v1.20 en langage **CEL**). Intercepte tous les Pods utilisant une image `ghcr.io/milenko5/homelab-devsecops/*` et impose (`validationActions: [Deny]`) une signature **Cosign Keyless OIDC** émise par GitHub Actions pour votre dépôt exact. |
+| **`kyverno-policies.yaml`** | Définit 2 politiques CEL Kyverno v1.20 en mode `Deny` sur `demo-app` (couvrant `containers`, `initContainers` et `ephemeralContainers`) : 1) **`ValidatingPolicy/restrict-registries-demo-app`** (interdit toute image hors `ghcr.io/milenko5/homelab-devsecops/*`), 2) **`ImageValidatingPolicy/verify-signed-images-homelab`** (exige une signature **Cosign Keyless OIDC** émise par `supply-chain.yml`). |
 
 ---
 

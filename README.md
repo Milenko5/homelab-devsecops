@@ -17,13 +17,13 @@ Bienvenue sur le dépôt de mon infrastructure "Homelab" orientée DevSecOps. L'
 
 - **Matériel & Hyperviseur :** 3 Nœuds physiques Intel dédiés (x86_64, 48 Go RAM total) / Ubuntu 26.04 LTS / Conteneurs système Incus.
     
-- **Orchestration :** Kubernetes (K3s).
+- **Orchestration :** Kubernetes (K3s HA avec **Keepalived VRRP Unicast** sur VIP API `172.16.17.220:6443`, chiffrement des secrets **`etcd` au repos** et kubeconfig `0600`).
     
-- **Réseau, DNS & Ingress :** Cilium (eBPF) avec L2 Announcements & Hubble UI (`https://hubble.lab.sysdev.ca`) / Split-Horizon DNS (Cloudflare Free + AdGuard Home HA gérés par OpenTofu) / Ingress Traefik v3 (`https://traefik.lab.sysdev.ca/dashboard/`).
+- **Réseau, DNS, SSO & Ingress :** **Cilium eBPF** avec **chiffrement transparent WireGuard inter-nœuds**, L2 Announcements (`172.16.17.20–.219`) & Hubble UI (`https://hubble.lab.sysdev.ca`) / Split-Horizon DNS (Cloudflare Free + AdGuard Home HA gérés par OpenTofu) / **Authentik SSO & ForwardAuth 100 % GitOps Blueprint** (`https://auth.lab.sysdev.ca`) / Ingress Traefik v3 (`https://traefik.lab.sysdev.ca/dashboard/`).
     
 - **PKI & Certificats TLS :** Cert-Manager avec Let's Encrypt Production (Défi `DNS-01` Cloudflare en DNS-over-HTTPS et certificat Wildcard `*.lab.sysdev.ca` mutualisé via `TLSStore`).
     
-- **Stockage Distribué :** Piraeus Operator v2 (LINSTOR / DRBD 9 en espace noyau — Réplication synchrone 3x).
+- **Stockage Distribué :** Piraeus Operator v2 (LINSTOR / DRBD 9 en espace noyau — `piraeus-storage-replicated` 3× et `piraeus-storage-local` 1×).
     
 - **Observabilité & Métriques :** `kube-prometheus-stack` (Prometheus + Grafana persistés sur volumes répliqués DRBD 9 et exposés sur `https://grafana.lab.sysdev.ca`).
     
@@ -31,9 +31,9 @@ Bienvenue sur le dépôt de mon infrastructure "Homelab" orientée DevSecOps. L'
     
 - **GitOps :** FluxCD (avec vérification cryptographique GPG du commit `HEAD` d'`origin/main` en cluster).
     
-- **Gestion des Secrets :** Mozilla SOPS (Age) & HashiCorp Vault Raft HA (`https://vault.lab.sysdev.ca`) + External Secrets Operator (ESO).
+- **Gestion des Secrets :** Mozilla SOPS (Age) & HashiCorp Vault Raft HA (`https://vault.lab.sysdev.ca`, micro-segmenté par `NetworkPolicy`) + External Secrets Operator (ESO).
     
-- **Sécurité de la Chaîne d'Approvisionnement :** Signature Git OpenPGP (GPG), Gitleaks, Checkov, Anchore (Syft & Grype), Sigstore (Cosign Keyless OIDC), Kyverno v1.20 (`ImageValidatingPolicy` CEL) & Application de démonstration `FROM scratch` (`https://demo.lab.sysdev.ca`).
+- **Sécurité de la Chaîne d'Approvisionnement :** Signature Git OpenPGP (GPG), Gitleaks, Checkov, Anchore (Syft & Grype en audit local strict avant push GHCR), Sigstore (Cosign Keyless OIDC), **Kyverno v1.20 CEL** (`ValidatingPolicy` + `ImageValidatingPolicy`) & Application de démonstration `FROM scratch` (`https://demo.lab.sysdev.ca`).
     
 
 ## 📐 Architecture Logique et Réseau

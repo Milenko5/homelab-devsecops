@@ -12,14 +12,16 @@ Ce manuel opérationnel est votre référence complète pour **surveiller, explo
 Depuis le terminal de votre **DevContainer**, exécutez ces commandes pour vérifier que chaque couche fonctionne parfaitement :
 
 ```bash
-# 1. Santé des 3 nœuds Kubernetes (doivent tous afficher 'Ready')
+# 1. Santé des 3 nœuds Kubernetes et de la VIP HA Keepalived (172.16.17.220:6443)
+kubectl cluster-info
 kubectl get nodes -o wide
 
 # 2. Santé de la synchronisation GitOps FluxCD (tous à 'READY: True')
 flux get all
 
-# 3. Santé du réseau eBPF Cilium et du pool d'IPs LoadBalancer L2 (172.16.17.20 à .220)
+# 3. Santé du réseau eBPF Cilium, du chiffrement WireGuard et du pool L2 (172.16.17.20 à .219)
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+kubectl -n kube-system exec ds/cilium -- cilium-dbg encrypt status
 kubectl get ciliumloadbalancerippools,ciliuml2announcementpolicies -A
 
 # 4. Santé du stockage distribué Piraeus / LINSTOR / DRBD 9 (tous les réplicas 'UpToDate' et 'Established(2)')
@@ -31,12 +33,13 @@ ROOT_TOKEN=$(jq -r '.root_token' ~/.ssh/vault-init.json)
 kubectl exec -n vault vault-0 -- vault status
 kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault operator raft list-peers
 
-# 6. Santé des certificats TLS Let's Encrypt et d'External Secrets Operator (ESO)
+# 6. Santé d'Authentik SSO, des certificats TLS Let's Encrypt et d'External Secrets Operator (ESO)
+kubectl get pods -n authentik
 kubectl get clusterissuer,certificate -A
 kubectl get clustersecretstore,externalsecret -A
 
-# 7. Santé de la politique d'admission Kyverno v1.20 (CEL)
-kubectl get imagevalidatingpolicy
+# 7. Santé des politiques d'admission Kyverno v1.20 (CEL)
+kubectl get validatingpolicy,imagevalidatingpolicy
 ```
 
 ---
@@ -308,9 +311,26 @@ Traefik dans votre cluster supporte **deux syntaxes** (toutes deux bénéficient
      tls: {} # Utilise automatiquement le certificat Wildcard du TLSStore par défaut
    ```
 
-### 4.3 Exposer un service non-HTTP (TCP/UDP : Base de données, MQTT, SSH, Serveur de jeu)
+### 4.3 Protéger une application avec Authentik SSO (ForwardAuth)
 
-Si vous souhaitez exposer un pod directement sur votre réseau local `172.16.17.x` **sans passer par Traefik**, créez un `Service` de type **`LoadBalancer`**. Cilium L2 lui attribuera automatiquement une IP libre dans la plage `172.16.17.20` – `172.16.17.220` (ou une IP fixe si vous ajoutez l'annotation `io.cilium/lb-ipam-ips`) :
+Grâce au middleware global `authentik-forward-auth` (namespace `authentik`, utilisable cross-namespace) et au Blueprint `homelab-domain-auth` (`cookie_domain: lab.sysdev.ca`), vous pouvez protéger **n'importe quelle application `*.lab.sysdev.ca`** derrière votre portail SSO **`https://auth.lab.sysdev.ca`** en 1 ligne :
+
+- **Sur un `Ingress` standard :** ajoutez simplement l'annotation :
+  ```yaml
+  metadata:
+    annotations:
+      traefik.ingress.kubernetes.io/router.middlewares: authentik-authentik-forward-auth@kubernetescrd
+  ```
+- **Sur un `IngressRoute` Traefik :** ajoutez le bloc `middlewares` :
+  ```yaml
+  middlewares:
+    - name: authentik-forward-auth
+      namespace: authentik
+  ```
+
+### 4.4 Exposer un service non-HTTP (TCP/UDP : Base de données, MQTT, SSH, Serveur de jeu)
+
+Si vous souhaitez exposer un pod directement sur votre réseau local `172.16.17.x` **sans passer par Traefik**, créez un `Service` de type **`LoadBalancer`**. Cilium L2 lui attribuera automatiquement une IP libre dans la plage `172.16.17.20` – `172.16.17.219` (`172.16.17.220` étant réservée à la VIP HA Keepalived de l'API K3s) :
 
 ```yaml
 apiVersion: v1
