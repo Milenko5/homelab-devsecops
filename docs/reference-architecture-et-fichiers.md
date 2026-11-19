@@ -1,9 +1,6 @@
 # 🧠 Référence Architecturale Complète & Anatomie du Dépôt (Vitrine DevSecOps)
 
-Ce document est la **bible technique et architecturale** du projet `homelab-devsecops`. Il a été conçu pour deux objectifs précis :
-
-1. **Maîtrise totale pour l'évolution du cluster** : comprendre précisément le rôle de **chaque fichier**, chaque ligne clé, et les interactions exactes entre tous les composants.
-2. **Défense technique en entretien DevSecOps / Platform Engineering** : être capable d'expliquer et de justifier chaque choix d'architecture, chaque barrière de sécurité et chaque compromis technique avec la précision d'un ingénieur senior.
+Ce document est la **référence technique et architecturale** du projet `homelab-devsecops`. Il permet de comprendre précisément le rôle de **chaque fichier**, chaque choix d'architecture, et les interactions exactes entre tous les composants afin de faire évoluer le cluster en toute autonomie.
 
 > Pour les commandes quotidiennes d'exploitation (ajout d'apps, CPU/RAM, scaling, certificats, Vault, dépannage), consultez le **[Guide d'Administration & Usage au Quotidien](guide-administration-quotidienne.md)**.
 
@@ -29,7 +26,6 @@ Ce document est la **bible technique et architecturale** du projet `homelab-devs
    - [3.9 `cluster/apps/` (Workloads Applicatifs & `demo-app`)](#39-clusterapps-workloads-applicatifs--demo-app)
    - [3.10 `scripts/` (Utilitaires d'Amorçage & Sécurité)](#310-scripts-utilitaires-damorçage--sécurité)
    - [3.11 `docs/` (Documentation & ADR)](#311-docs-documentation--adr)
-4. [Défense en Entretien DevSecOps : Questions Difficiles & Retours d'Expérience](#4-défense-en-entretien-devsecops--questions-difficiles--retours-dexpérience)
 
 ---
 
@@ -356,36 +352,5 @@ Voici l'inventaire complet de **chaque fichier** présent dans `homelab-devsecop
 | :--- | :--- |
 | **`docs/bootstrap-guide.md`** | Runbook **Jour 0** : procédure complète pas-à-pas pour reconstruire l'intégralité du homelab depuis zéro (serveurs vierges jusqu'au cluster opérationnel). |
 | **`docs/guide-administration-quotidienne.md`** | Manuel **Jour 2** : checkup santé, ajout/suppression d'apps, CPU/RAM, scaling, exposition Traefik/Cilium L2, cycle de vie certificats TLS, gestion Vault/ESO/SOPS, volumes DRBD 9 et dépannage. |
-| **`docs/reference-architecture-et-fichiers.md`** | *(Ce document)* Référence architecturale complète, diagrammes de séquence MermaidJS, explication fichier par fichier et préparation d'entretien DevSecOps. |
+| **`docs/reference-architecture-et-fichiers.md`** | *(Ce document)* Référence architecturale complète, diagrammes de séquence MermaidJS et explication fichier par fichier. |
 | **`docs/Architecture Decision Records/ADR-0001` à `ADR-0009`** | Les 9 *Architecture Decision Records* formalisant le contexte, les options évaluées et la justification technique de chaque choix majeur (Matériel, Incus, IaC/GitOps, Cilium eBPF, Cert-Manager DNS-01, Vault/ESO, Supply Chain, Piraeus/DRBD 9, DevContainer). |
-
----
-
-## 4. Défense en Entretien DevSecOps : Questions Difficiles & Retours d'Expérience
-
-Voici les questions les plus fréquentes posées par des architectes ou recruteurs seniors sur ce type de vitrine, et les réponses exactes appuyées par votre implémentation réelle :
-
-### Q1 : « Pourquoi utiliser des conteneurs système Incus LXC au lieu de VMs KVM (Proxmox) ou de Bare-Metal pur ? »
-> **Réponse :** Avec 3 nœuds physiques de 16 Go de RAM, la virtualisation complète KVM consomme 15 à 20 % de RAM en overhead hyperviseur et noyaux invités. **Incus LXC** offre une isolation système complète (IP dédiée sur `br0`, systemd, snapshots, API REST mTLS pilotée par OpenTofu) avec **0 % d'overhead mémoire** car le noyau Linux est partagé. En revanche, cela impose une vraie maîtrise système : nous avons dû pré-créer les périphériques `/dev/loop0..63` et `/dev/drbd1000..1063` dans les LXC, désactiver `usermode_helper` sur le module noyau `drbd` des hôtes (`options drbd usermode_helper=disabled`), et désactiver `hostRootFsMount` sur `node-exporter`.
-
-### Q2 : « Comment garantissez-vous qu'un attaquant compromettant votre compte GitHub ou un workflow ne puisse pas déployer un pod malveillant ? »
-> **Réponse :** Nous appliquons une **défense en profondeur sur 4 barrières indépendantes** :
-> 1. **Gouvernance GitHub (OpenTofu)** : les *Rulesets* interdisent le push direct sur `main` et imposent des commits signés GPG.
-> 2. **Vérification GitOps en cluster (FluxCD)** : même si la règle GitHub était contournée, FluxCD refuse de synchroniser tout commit `HEAD` dont la signature cryptographique OpenPGP ne correspond pas à notre keyring (`flux-pgp-public-keys`).
-> 3. **Supply Chain & Admission (Cosign + Kyverno v1.20 CEL)** : toute image `ghcr.io/icpvs/homelab-devsecops/*` est bloquée à l'admission par `ImageValidatingPolicy` si elle ne possède pas une signature Cosign Keyless OIDC valide et tracée dans Rekor.
-> 4. **Durcissement Runtime** : PSA `Restricted` (non-root, `readOnlyRootFilesystem`, `drop ALL`), `NetworkPolicy` par défaut fermée, et secrets montés en fichiers lecture seule via Vault/ESO.
-
-### Q3 : « Pourquoi votre pipeline `build-devcontainer.yml` refuse-t-il les exceptions Grype alors que `ci-infra` et `supply-chain` sont déjà là ? »
-> **Réponse :** C'est un choix assumé de **Zéro-Tolérance sur la Supply Chain** : nous construisons l'image DevContainer **en local uniquement (`load: true, push: false`)**, générons le SBOM avec Syft, puis auditons avec Grype (`--only-fixed --fail-on critical`). Si un outil CLI embarqué possède une CVE critique corrigée, le pipeline échoue **avant même que l'image ne soit poussée sur GHCR**. Plutôt que de masquer le risque avec un `.grype.yaml`, notre workflow automatisé `update-cli-tools.yml` propose chaque semaine une PR signée GPG (via GraphQL `createCommitOnBranch`) pour monter les versions des 12 outils dès que les mainteneurs publient un correctif.
-
-### Q4 : « Comment avez-vous résolu le défi ACME DNS-01 avec un DNS interne Split-Horizon (AdGuard Home) ? »
-> **Réponse :** En environnement privé, `*.lab.sysdev.ca` pointe en interne vers `172.16.17.20` via AdGuard Home, qui intercepte aussi les requêtes DNS sortantes. Lors du self-check DNS-01, Cert-Manager ne voyait pas l'enregistrement `_acme-challenge` créé sur Cloudflare. Nous avons résolu cela proprement en forçant Cert-Manager à effectuer sa vérification récursive en **DNS-over-HTTPS (DoH)** directement vers Cloudflare (`https://1.1.1.1/dns-query` et `https://1.0.0.1/dns-query`), sans exposer aucun port du cluster sur Internet.
-
-### Q5 : « Pourquoi monter les secrets Vault en fichiers (`/etc/secrets`) plutôt qu'en variables d'environnement (`envFrom`) ? »
-> **Réponse :** C'est la bonne pratique **Checkov `CKV_K8S_35`** : les variables d'environnement sont héritées par les processus enfants, apparaissent souvent dans les crash dumps, les logs de debug ou `/proc/<pid>/environ`. Les monter via un volume `secret` (stocké en RAM `tmpfs` dans le pod, en lecture seule) limite strictement la surface d'exposition et permet en plus une rotation à chaud par Kubernetes lorsque ESO rafraîchit le secret depuis Vault.
-
-### Q6 : « Pourquoi avoir migré vers `ImageValidatingPolicy` (CEL) sur Kyverno v1.20 ? »
-> **Réponse :** Kyverno v1.20 a supprimé le CRD historique `kyverno.io/v1 ClusterPolicy` au profit des nouvelles politiques natives basées sur **CEL** (`policies.kyverno.io/v1 ImageValidatingPolicy`), alignées avec les `ValidatingAdmissionPolicy` de Kubernetes. L'expression `verifyImageSignatures(image, [attestors.cosignkeyless])` est plus rapide, plus déclarative et pérenne pour les futures versions de Kubernetes.
-
-### Q7 : « Comment sécurisez-vous votre fichier `terraform.tfstate` sans backend Cloud payant ? »
-> **Réponse :** Nous exploitons le **chiffrement natif d'OpenTofu** (absent de Terraform OSS) configuré dans `providers.tf` : l'état local est chiffré en **AES-GCM 256 bits** avec dérivation de clé **PBKDF2** à partir de `TF_VAR_state_passphrase`. Ainsi, même un accès physique au fichier `.tfstate` ne révèle aucun jeton API ni certificat mTLS.

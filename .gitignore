@@ -23,3 +23,6 @@ infrastructure/ansible/inventory/hosts.yml
 # Fichiers IntelliJ Idea
 .idea/*
 cluster/infrastructure/configs/.decrypted*
+
+# Notes personnelles (non publiées sur GitHub)
+docs/preparation-entretien-devsecops.md
