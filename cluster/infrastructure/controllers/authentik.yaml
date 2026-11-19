@@ -4,7 +4,8 @@ kind: Namespace
 metadata:
   name: authentik
 ---
-# Synchronisation des secrets Authentik (Secret Key & PostgreSQL) depuis HashiCorp Vault via ESO
+# Synchronisation des secrets Authentik (Secret Key, PostgreSQL & Bootstrap Admin Zero-ClickOps)
+# depuis HashiCorp Vault via External Secrets Operator (ESO)
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -27,6 +28,14 @@ spec:
       remoteRef:
         key: authentik/config
         property: pg_password
+    - secretKey: AUTHENTIK_BOOTSTRAP_EMAIL
+      remoteRef:
+        key: authentik/config
+        property: bootstrap_email
+    - secretKey: AUTHENTIK_BOOTSTRAP_PASSWORD
+      remoteRef:
+        key: authentik/config
+        property: bootstrap_password
     - secretKey: password
       remoteRef:
         key: authentik/config
@@ -35,6 +44,54 @@ spec:
       remoteRef:
         key: authentik/config
         property: pg_admin_password
+---
+# Blueprint Authentik déclaratif (100 % GitOps / Zéro-ClickOps) :
+# Provisionne automatiquement le Proxy Provider (Forward Auth niveau domaine *.lab.sysdev.ca),
+# l'Application Homelab Admin et l'attachement à l'Embedded Outpost au démarrage du worker
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-homelab-blueprint
+  namespace: authentik
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+data:
+  homelab-forward-auth.yaml: |
+    version: 1
+    metadata:
+      name: "Homelab DevSecOps - Forward Auth Domain (*.lab.sysdev.ca)"
+    entries:
+      - model: authentik_providers_proxy.proxyprovider
+        state: present
+        identifiers:
+          name: "homelab-domain-auth"
+        attrs:
+          name: "homelab-domain-auth"
+          mode: "forward_domain"
+          external_host: "https://auth.lab.sysdev.ca"
+          cookie_domain: "lab.sysdev.ca"
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+
+      - model: authentik_core.application
+        state: present
+        identifiers:
+          slug: "homelab-admin"
+        attrs:
+          name: "Homelab Admin"
+          slug: "homelab-admin"
+          provider: !Find [authentik_providers_proxy.proxyprovider, [name, "homelab-domain-auth"]]
+          open_in_new_tab: false
+
+      - model: authentik_outposts.outpost
+        state: present
+        identifiers:
+          name: "authentik Embedded Outpost"
+        attrs:
+          name: "authentik Embedded Outpost"
+          type: "proxy"
+          providers:
+            - !Find [authentik_providers_proxy.proxyprovider, [name, "homelab-domain-auth"]]
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -68,6 +125,9 @@ spec:
       envFrom:
         - secretRef:
             name: authentik-secrets
+    blueprints:
+      configMaps:
+        - authentik-homelab-blueprint
     authentik:
       error_reporting:
         enabled: false

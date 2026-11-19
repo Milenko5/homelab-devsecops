@@ -58,13 +58,20 @@ if ! kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" vault kv g
       admin_password="$(openssl rand -base64 18)"
 fi
 
-echo "8. Injection des secrets Authentik (SSO / ForwardAuth) dans Vault (secret/authentik/config)..."
+echo "8. Injection des secrets Authentik (SSO / ForwardAuth + Bootstrap Zero-ClickOps) dans Vault (secret/authentik/config)..."
 if ! kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" vault kv get secret/authentik/config >/dev/null 2>&1; then
   kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
     vault kv put secret/authentik/config \
       secret_key="$(openssl rand -base64 48)" \
       pg_password="$(openssl rand -hex 24)" \
-      pg_admin_password="$(openssl rand -hex 24)"
+      pg_admin_password="$(openssl rand -hex 24)" \
+      bootstrap_email="admin@sysdev.ca" \
+      bootstrap_password="$(openssl rand -base64 18)"
+elif ! kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" vault kv get -field=bootstrap_password secret/authentik/config >/dev/null 2>&1; then
+  kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
+    vault kv patch secret/authentik/config \
+      bootstrap_email="admin@sysdev.ca" \
+      bootstrap_password="$(openssl rand -base64 18)"
 fi
 
 echo "✅ HashiCorp Vault est configuré avec Kubernetes Auth et prêt pour External Secrets Operator (ESO) !"
