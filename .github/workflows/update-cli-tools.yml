@@ -30,15 +30,12 @@ jobs:
           set -euo pipefail
 
           DOCKERFILE=".devcontainer/Dockerfile"
-          CI_INFRA=".github/workflows/ci-infra.yml"
-          SUPPLY_CHAIN=".github/workflows/supply-chain.yml"
-          BUILD_DEV=".github/workflows/build-devcontainer.yml"
 
           SUMMARY_FILE="/tmp/updates-summary.md"
           cat << 'EOF' > "${SUMMARY_FILE}"
           ## 🔄 Mise à jour automatisée de la boîte à outils DevSecOps
 
-          Ce Pull Request a été généré et signé cryptographiquement (`Verified` via l'API GraphQL GitHub) pour mettre à jour les binaires CLI du DevContainer (`.devcontainer/Dockerfile`) et des workflows CI/CD :
+          Ce Pull Request a été généré et signé cryptographiquement (`Verified` via l'API GraphQL GitHub) pour mettre à jour les versions figées dans `.devcontainer/Dockerfile` (Source Unique de Vérité lue automatiquement par tous les workflows CI/CD) :
 
           | Outil CLI | Version actuelle | Nouvelle version | Source officielle |
           | :--- | :--- | :--- | :--- |
@@ -51,7 +48,7 @@ jobs:
             gh api "repos/$1/releases/latest" --jq '.tag_name'
           }
 
-          # Fonction de comparaison et remplacement
+          # Fonction de comparaison et remplacement dans la Source Unique de Vérité (.devcontainer/Dockerfile)
           update_tool() {
             local tool_name="$1"
             local arg_name="$2"
@@ -72,32 +69,6 @@ jobs:
               sed -i "s|^ARG ${arg_name}=\"${current_val}\"|ARG ${arg_name}=\"${latest_formatted}\"|g" "${DOCKERFILE}"
               echo "| **${tool_name}** | \`${current_val}\` | \`${latest_formatted}\` | ${source_url} |" >> "${SUMMARY_FILE}"
               UPDATES_COUNT=$((UPDATES_COUNT + 1))
-
-              # Synchronisation avec les fichiers de workflows GitHub Actions
-              case "${arg_name}" in
-                OPENTOFU_VERSION)
-                  sed -i "s|tofu_version: \"${current_val}\"|tofu_version: \"${latest_formatted}\"|g" "${CI_INFRA}"
-                  ;;
-                TFLINT_VERSION)
-                  sed -i "s|tflint_version: ${current_val}|tflint_version: ${latest_formatted}|g" "${CI_INFRA}"
-                  ;;
-                KUBECONFORM_VERSION)
-                  sed -i "s|kubeconform/releases/download/${current_val}|kubeconform/releases/download/${latest_formatted}|g" "${CI_INFRA}"
-                  ;;
-                FLUX_VERSION)
-                  sed -i "s|flux_${current_val}|flux_${latest_formatted}|g" "${CI_INFRA}"
-                  sed -i "s|download/v${current_val}|download/v${latest_formatted}|g" "${CI_INFRA}"
-                  ;;
-                CHECKOV_VERSION)
-                  sed -i "s|checkov==${current_val}|checkov==${latest_formatted}|g" "${CI_INFRA}"
-                  ;;
-                SYFT_VERSION)
-                  sed -i "s|SYFT_VERSION: \"${current_val}\"|SYFT_VERSION: \"${latest_formatted}\"|g" "${SUPPLY_CHAIN}" "${BUILD_DEV}"
-                  ;;
-                GRYPE_VERSION)
-                  sed -i "s|GRYPE_VERSION: \"${current_val}\"|GRYPE_VERSION: \"${latest_formatted}\"|g" "${SUPPLY_CHAIN}" "${BUILD_DEV}"
-                  ;;
-              esac
             else
               echo "✅ ${tool_name} est déjà à jour (${current_val})"
             fi
