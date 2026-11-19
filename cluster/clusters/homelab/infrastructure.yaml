@@ -7,7 +7,7 @@ metadata:
 spec:
   interval: 15m0s
   retryInterval: 2m0s
-  timeout: 5m0s
+  timeout: 10m0s
   sourceRef:
     kind: GitRepository
     name: flux-system
@@ -30,7 +30,7 @@ spec:
     - name: piraeus-operator
   interval: 15m0s
   retryInterval: 2m0s
-  timeout: 5m0s
+  timeout: 10m0s
   sourceRef:
     kind: GitRepository
     name: flux-system

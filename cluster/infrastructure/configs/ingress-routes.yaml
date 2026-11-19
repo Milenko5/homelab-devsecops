@@ -45,3 +45,26 @@ spec:
                 name: hubble-ui
                 port:
                   number: 80
+---
+# 3. Exposition HTTPS de Grafana - Observabilité & Métriques Prometheus (https://grafana.lab.sysdev.ca)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: grafana.lab.sysdev.ca
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kube-prometheus-stack-grafana
+                port:
+                  number: 80
