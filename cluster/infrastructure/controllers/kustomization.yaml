@@ -8,3 +8,4 @@ resources:
   - traefik.yaml
   - vault.yaml
   - external-secrets.yaml
+  - kyverno.yaml

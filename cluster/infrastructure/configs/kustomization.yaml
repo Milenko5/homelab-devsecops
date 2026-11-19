@@ -8,3 +8,4 @@ resources:
   - pki-letsencrypt.yaml
   - ingress-routes.yaml
   - vault-secret-store.yaml
+  - kyverno-policies.yaml

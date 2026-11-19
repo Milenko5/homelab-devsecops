@@ -66,6 +66,7 @@ jobs:
         with:
           context: ${{ env.APP_CONTEXT }}
           push: true
+          provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -87,7 +88,8 @@ jobs:
 
       - name: 7. Génération de la nomenclature logicielle (SBOM SPDX) avec Syft
         run: |
-          IMAGE_URI="${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_URI="${{ env.REGISTRY }}/${REPO_LOWER}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
           syft "${IMAGE_URI}" -o spdx-json=sbom.spdx.json
 
       - name: 8. Barrière de sécurité CVE sur le SBOM avec Grype (Fail-Fast)
@@ -102,7 +104,8 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
-          IMAGE_URI="${{ env.REGISTRY }}/${{ github.repository }}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_URI="${{ env.REGISTRY }}/${REPO_LOWER}/${{ env.APP_NAME }}@${{ steps.build-and-push.outputs.digest }}"
 
           echo "Signature cryptographique de l'image via Fulcio & Rekor..."
           cosign sign --yes "${IMAGE_URI}"
