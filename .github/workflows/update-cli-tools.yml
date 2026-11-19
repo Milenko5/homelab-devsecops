@@ -1,0 +1,191 @@
+name: Maintenance - Mise à jour automatisée des outils CLI DevSecOps
+
+on:
+  # Exécution planifiée tous les lundis à 08h00 UTC
+  schedule:
+    - cron: "0 8 * * 1"
+  # Exécution manuelle à la demande depuis l'onglet Actions
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-update-tools:
+    name: "Vérification des releases upstream & Création PR signée GPG"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Récupération du code source
+        uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: 2. Vérification des dernières versions stables des 12 outils CLI
+        id: check_versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          DOCKERFILE=".devcontainer/Dockerfile"
+          CI_INFRA=".github/workflows/ci-infra.yml"
+          SUPPLY_CHAIN=".github/workflows/supply-chain.yml"
+          BUILD_DEV=".github/workflows/build-devcontainer.yml"
+
+          SUMMARY_FILE="/tmp/updates-summary.md"
+          cat << 'EOF' > "${SUMMARY_FILE}"
+          ## 🔄 Mise à jour automatisée de la boîte à outils DevSecOps
+
+          Ce Pull Request a été généré et signé cryptographiquement (`Verified` via l'API GraphQL GitHub) pour mettre à jour les binaires CLI du DevContainer (`.devcontainer/Dockerfile`) et des workflows CI/CD :
+
+          | Outil CLI | Version actuelle | Nouvelle version | Source officielle |
+          | :--- | :--- | :--- | :--- |
+          EOF
+
+          UPDATES_COUNT=0
+
+          # Fonction utilitaire pour récupérer le dernier tag GitHub Release
+          get_gh_release() {
+            gh api "repos/$1/releases/latest" --jq '.tag_name'
+          }
+
+          # Fonction de comparaison et remplacement
+          update_tool() {
+            local tool_name="$1"
+            local arg_name="$2"
+            local latest_raw="$3"
+            local keep_v_prefix="$4"
+            local source_url="$5"
+
+            local latest_formatted="${latest_raw#v}"
+            if [[ "${keep_v_prefix}" == "true" ]]; then
+              latest_formatted="v${latest_formatted}"
+            fi
+
+            local current_val
+            current_val=$(grep -E "^ARG ${arg_name}=" "${DOCKERFILE}" | sed -E 's/^ARG [^=]+="([^"]+)".*/\1/')
+
+            if [[ -n "${latest_formatted}" && "${current_val}" != "${latest_formatted}" ]]; then
+              echo "⬆️ Mise à jour détectée pour ${tool_name} : ${current_val} -> ${latest_formatted}"
+              sed -i "s|^ARG ${arg_name}=\"${current_val}\"|ARG ${arg_name}=\"${latest_formatted}\"|g" "${DOCKERFILE}"
+              echo "| **${tool_name}** | \`${current_val}\` | \`${latest_formatted}\` | ${source_url} |" >> "${SUMMARY_FILE}"
+              UPDATES_COUNT=$((UPDATES_COUNT + 1))
+
+              # Synchronisation avec les fichiers de workflows GitHub Actions
+              case "${arg_name}" in
+                OPENTOFU_VERSION)
+                  sed -i "s|tofu_version: \"${current_val}\"|tofu_version: \"${latest_formatted}\"|g" "${CI_INFRA}"
+                  ;;
+                TFLINT_VERSION)
+                  sed -i "s|tflint_version: ${current_val}|tflint_version: ${latest_formatted}|g" "${CI_INFRA}"
+                  ;;
+                KUBECONFORM_VERSION)
+                  sed -i "s|kubeconform/releases/download/${current_val}|kubeconform/releases/download/${latest_formatted}|g" "${CI_INFRA}"
+                  ;;
+                FLUX_VERSION)
+                  sed -i "s|flux_${current_val}|flux_${latest_formatted}|g" "${CI_INFRA}"
+                  sed -i "s|download/v${current_val}|download/v${latest_formatted}|g" "${CI_INFRA}"
+                  ;;
+                CHECKOV_VERSION)
+                  sed -i "s|checkov==${current_val}|checkov==${latest_formatted}|g" "${CI_INFRA}"
+                  ;;
+                SYFT_VERSION)
+                  sed -i "s|SYFT_VERSION: \"${current_val}\"|SYFT_VERSION: \"${latest_formatted}\"|g" "${SUPPLY_CHAIN}" "${BUILD_DEV}"
+                  ;;
+                GRYPE_VERSION)
+                  sed -i "s|GRYPE_VERSION: \"${current_val}\"|GRYPE_VERSION: \"${latest_formatted}\"|g" "${SUPPLY_CHAIN}" "${BUILD_DEV}"
+                  ;;
+              esac
+            else
+              echo "✅ ${tool_name} est déjà à jour (${current_val})"
+            fi
+          }
+
+          update_tool "OpenTofu"    "OPENTOFU_VERSION"    "$(get_gh_release opentofu/opentofu)"               "false" "https://github.com/opentofu/opentofu/releases"
+          update_tool "kubectl"     "KUBECTL_VERSION"     "$(curl -fsSL https://dl.k8s.io/release/stable.txt)" "true"  "https://github.com/kubernetes/kubernetes/releases"
+          update_tool "Helm"        "HELM_VERSION"        "$(get_gh_release helm/helm)"                       "true"  "https://github.com/helm/helm/releases"
+          update_tool "Flux CLI"    "FLUX_VERSION"        "$(get_gh_release fluxcd/flux2)"                    "false" "https://github.com/fluxcd/flux2/releases"
+          update_tool "Cilium CLI"  "CILIUM_CLI_VERSION"  "$(get_gh_release cilium/cilium-cli)"               "true"  "https://github.com/cilium/cilium-cli/releases"
+          update_tool "Mozilla SOPS" "SOPS_VERSION"       "$(get_gh_release getsops/sops)"                    "true"  "https://github.com/getsops/sops/releases"
+          update_tool "Anchore Syft" "SYFT_VERSION"       "$(get_gh_release anchore/syft)"                    "false" "https://github.com/anchore/syft/releases"
+          update_tool "Anchore Grype" "GRYPE_VERSION"     "$(get_gh_release anchore/grype)"                   "false" "https://github.com/anchore/grype/releases"
+          update_tool "Checkov"     "CHECKOV_VERSION"     "$(curl -fsSL https://pypi.org/pypi/checkov/json | jq -r '.info.version')" "false" "https://pypi.org/project/checkov/"
+          update_tool "Sigstore Cosign" "COSIGN_VERSION"  "$(get_gh_release sigstore/cosign)"                 "true"  "https://github.com/sigstore/cosign/releases"
+          update_tool "Kubeconform" "KUBECONFORM_VERSION" "$(get_gh_release yannh/kubeconform)"               "true"  "https://github.com/yannh/kubeconform/releases"
+          update_tool "TFLint"      "TFLINT_VERSION"      "$(get_gh_release terraform-linters/tflint)"        "true"  "https://github.com/terraform-linters/tflint/releases"
+
+          echo "updates_count=${UPDATES_COUNT}" >> "${GITHUB_OUTPUT}"
+
+      - name: 3. Création d'un commit signé GPG (via API GraphQL) et ouverture de la Pull Request
+        if: steps.check_versions.outputs.updates_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_NAME="chore/auto-update-cli-tools"
+          MAIN_SHA=$(git rev-parse HEAD)
+
+          # 1. Créer ou réinitialiser la branche distante sur le HEAD de main via l'API GitHub
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH_NAME}" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH_NAME}" \
+              -f sha="${MAIN_SHA}" -F force=true >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/heads/${BRANCH_NAME}" -f sha="${MAIN_SHA}" >/dev/null
+          fi
+
+          # 2. Construire la liste des fichiers modifiés encodés en Base64 pour la mutation GraphQL createCommitOnBranch
+          #    (Les commits créés via createCommitOnBranch sont automatiquement signés GPG par la clé officielle web-flow.gpg de GitHub !)
+          ADDITIONS_JSON="[]"
+          for file in $(git diff --name-only); do
+            B64_CONTENT=$(base64 -w 0 "${file}")
+            ADDITIONS_JSON=$(echo "${ADDITIONS_JSON}" | jq --arg path "${file}" --arg contents "${B64_CONTENT}" \
+              '. + [{"path": $path, "contents": $contents}]')
+          done
+
+          PAYLOAD=$(jq -n \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --arg branch "${BRANCH_NAME}" \
+            --arg oid "${MAIN_SHA}" \
+            --arg headline "chore(deps): bump DevSecOps CLI tools versions" \
+            --arg body "Signed-off-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>" \
+            --argjson additions "${ADDITIONS_JSON}" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid signature { isValid } } } }",
+              variables: {
+                input: {
+                  branch: {
+                    repositoryNameWithOwner: $repo,
+                    branchName: $branch
+                  },
+                  message: {
+                    headline: $headline,
+                    body: $body
+                  },
+                  fileChanges: {
+                    additions: $additions
+                  },
+                  expectedHeadOid: $oid
+                }
+              }
+            }')
+
+          echo "Création du commit signé GPG via l'API GraphQL GitHub..."
+          gh api graphql --input - <<< "${PAYLOAD}"
+
+          # 3. Ouvrir (ou mettre à jour) la Pull Request
+          EXISTING_PR=$(gh pr list --head "${BRANCH_NAME}" --base main --json number --jq '.[0].number // empty')
+          if [[ -n "${EXISTING_PR}" ]]; then
+            gh pr edit "${EXISTING_PR}" --body-file /tmp/updates-summary.md
+            echo "✅ Pull Request #${EXISTING_PR} mise à jour avec succès !"
+          else
+            gh pr create \
+              --base main \
+              --head "${BRANCH_NAME}" \
+              --title "chore(deps): mise à jour automatisée des outils CLI DevSecOps" \
+              --body-file /tmp/updates-summary.md
+            echo "✅ Nouvelle Pull Request créée avec succès !"
+          fi
