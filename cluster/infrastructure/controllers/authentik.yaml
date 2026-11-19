@@ -60,6 +60,8 @@ data:
     version: 1
     metadata:
       name: "Homelab DevSecOps - Forward Auth Domain (*.lab.sysdev.ca)"
+      labels:
+        blueprints.goauthentik.io/instantiate: "true"
     entries:
       - model: authentik_providers_proxy.proxyprovider
         state: present
