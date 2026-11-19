@@ -141,7 +141,7 @@ homelab-devsecops/
 
 - 🚀 **[Guide d'amorçage (Jour 0) et Runbook d'initialisation](docs/bootstrap-guide.md)**
 - 🛠️ **[Guide d'Administration & Usage au Quotidien (Jour 2)](docs/guide-administration-quotidienne.md)** *(ajout/suppression d'apps, CPU/RAM, scaling, Traefik, certificats TLS, Vault/ESO, DRBD 9, dépannage)*
-- 🧠 **[Référence Architecturale Complète & Anatomie du Dépôt](docs/reference-architecture-et-fichiers.md)** *(liens entre composants, 4 diagrammes de séquence MermaidJS, explication de chaque fichier, défense DevSecOps)*
+- 🧠 **[Référence Architecturale Complète & Anatomie du Dépôt](docs/reference-architecture-et-fichiers.md)** *(liens entre composants, 4 diagrammes de séquence MermaidJS, explication de chaque fichier)*
 
 | Référence | Décision Architecturale | Statut |
 | :--- | :--- | :--- |
