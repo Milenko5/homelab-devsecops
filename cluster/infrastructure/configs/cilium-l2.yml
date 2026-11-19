@@ -5,7 +5,7 @@ metadata:
 spec:
   blocks:
     - start: "172.16.17.20"
-      stop: "172.16.17.220"
+      stop: "172.16.17.219"
 ---
 apiVersion: "cilium.io/v2alpha1"
 kind: CiliumL2AnnouncementPolicy
