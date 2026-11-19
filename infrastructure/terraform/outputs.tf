@@ -33,6 +33,6 @@ resource "local_file" "inventaire_ansible" {
         ansible_user: ansible
         ansible_ssh_private_key_file: ~/.ssh/id_ed25519_homelab
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
-        k3s_api_vip: "${var.noeuds_k3s["k3s-srv-01"].adresse_ip}"
+        k3s_api_vip: "${var.k3s_api_vip}"
   EOF
 }

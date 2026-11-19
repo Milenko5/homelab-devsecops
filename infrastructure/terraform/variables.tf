@@ -45,6 +45,12 @@ variable "interface_pont_hote" {
   default     = "br0"
 }
 
+variable "k3s_api_vip" {
+  description = "Adresse IP virtuelle HA (Keepalived VRRP) pour l'API Kubernetes K3s (:6443)"
+  type        = string
+  default     = "172.16.17.220"
+}
+
 variable "noeuds_k3s" {
   description = "Définition déclarative des 3 nœuds du plan de contrôle K3s HA"
   type = map(object({

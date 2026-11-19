@@ -1,4 +1,64 @@
 ---
+# 0. Haute Disponibilité de l'API Kubernetes (:6443) via Keepalived (VRRP Unicast)
+- name: Installation de Keepalived pour la VIP HA de l'API Kubernetes
+  ansible.builtin.apt:
+    name: keepalived
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configuration de Keepalived (VRRP Unicast sur eth0 pour la VIP API K3s)
+  ansible.builtin.copy:
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      global_defs {
+        enable_script_security
+        script_user root
+      }
+
+      vrrp_script chk_k3s_api {
+        script "/bin/sh -c '/usr/bin/ss -tln | /usr/bin/grep -q :6443'"
+        interval 2
+        fall 2
+        rise 2
+        weight -20
+      }
+
+      vrrp_instance VI_K3S_API {
+        state {{ 'MASTER' if inventory_hostname == groups['k3s_cluster'][0] else 'BACKUP' }}
+        interface eth0
+        virtual_router_id 51
+        priority {{ 101 if inventory_hostname == groups['k3s_cluster'][0] else (100 if inventory_hostname == groups['k3s_cluster'][1] else 99) }}
+        advert_int 1
+        unicast_src_ip {{ ansible_host }}
+        unicast_peer {
+      {% for host in groups['k3s_cluster'] %}
+      {% if host != inventory_hostname %}
+          {{ hostvars[host]['ansible_host'] }}
+      {% endif %}
+      {% endfor %}
+        }
+        virtual_ipaddress {
+          {{ k3s_api_vip }}/23
+        }
+        track_script {
+          chk_k3s_api
+        }
+      }
+  notify: Redémarrage de Keepalived
+
+- name: Activation et démarrage du service Keepalived
+  ansible.builtin.systemd:
+    name: keepalived
+    enabled: true
+    state: started
+
+- name: Application immédiate de la VIP Keepalived avant la configuration K3s
+  ansible.builtin.meta: flush_handlers
+
 # 1. Préparation de la configuration déclarative K3s et du Drop-In Systemd
 - name: Création des répertoires de configuration K3s et Systemd Drop-In
   ansible.builtin.file:
@@ -87,7 +147,8 @@
     mode: "0600"
     content: |
       cluster-init: true
-      write-kubeconfig-mode: "0644"
+      write-kubeconfig-mode: "0600"
+      secrets-encryption: true
       node-ip: "{{ ansible_host }}"
       flannel-backend: "none"
       disable-network-policy: true
@@ -96,8 +157,12 @@
         - servicelb
         - traefik
       tls-san:
-        - "{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}"
+        - "{{ k3s_api_vip }}"
+      {% for host in groups['k3s_cluster'] %}
+        - "{{ hostvars[host]['ansible_host'] }}"
+      {% endfor %}
   when: inventory_hostname == groups['k3s_cluster'][0]
+  notify: Redémarrage contrôlé de K3s
 
 # Si le cluster existe déjà sur les nœuds 2/3, on démarre tous les nœuds déjà membres en parallèle pour rétablir le quorum
 - name: Démarrage parallèle des membres etcd existants (Rétablissement du quorum après reboot)
@@ -143,7 +208,7 @@
     group: root
     mode: "0600"
     content: |
-      server: "https://{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}:6443"
+      server: "https://{{ k3s_api_vip }}:6443"
       token: "{{ k3s_ha_token_slurp['content'] | b64decode | trim }}"
       node-ip: "{{ ansible_host }}"
       flannel-backend: "none"
@@ -152,8 +217,15 @@
       disable:
         - servicelb
         - traefik
-      write-kubeconfig-mode: "0644"
+      write-kubeconfig-mode: "0600"
+      secrets-encryption: true
+      tls-san:
+        - "{{ k3s_api_vip }}"
+      {% for host in groups['k3s_cluster'] %}
+        - "{{ hostvars[host]['ansible_host'] }}"
+      {% endfor %}
   when: inventory_hostname != groups['k3s_cluster'][0]
+  notify: Redémarrage contrôlé de K3s
 
 - name: Démarrage séquentiel des nœuds secondaires avec validation Kubelet
   when: inventory_hostname != groups['k3s_cluster'][0]
@@ -183,6 +255,37 @@
       ansible.builtin.fail:
         msg: "{{ k3s_ha_sec_crash_log.stdout_lines }}"
 
+# Application des redémarrages contrôlés de K3s (throttle: 1) si config.yaml a changé
+- name: Vérification de la présence de encryption-config.json sur le nœud maître
+  ansible.builtin.stat:
+    path: /var/lib/rancher/k3s/server/cred/encryption-config.json
+  delegate_to: "{{ groups['k3s_cluster'][0] }}"
+  run_once: true
+  register: k3s_ha_encryption_config_stat
+
+- name: Synchronisation de encryption-config.json depuis le nœud maître vers les nœuds secondaires
+  when: k3s_ha_encryption_config_stat.stat.exists
+  block:
+    - name: Lecture de encryption-config.json sur le nœud maître
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/cred/encryption-config.json
+      delegate_to: "{{ groups['k3s_cluster'][0] }}"
+      run_once: true
+      register: k3s_ha_encryption_config_slurp
+
+    - name: Copie de encryption-config.json sur les nœuds secondaires
+      ansible.builtin.copy:
+        dest: /var/lib/rancher/k3s/server/cred/encryption-config.json
+        content: "{{ k3s_ha_encryption_config_slurp['content'] | b64decode }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: inventory_hostname != groups['k3s_cluster'][0]
+      notify: Redémarrage contrôlé de K3s
+
+- name: Application des changements de configuration K3s (TLS SAN, secrets-encryption, VIP)
+  ansible.builtin.meta: flush_handlers
+
 # 6. Synchronisation automatique du Kubeconfig vers le DevContainer
 - name: Création du répertoire ~/.kube local dans le DevContainer
   ansible.builtin.file:
@@ -200,11 +303,11 @@
     flat: true
   when: inventory_hostname == groups['k3s_cluster'][0]
 
-- name: Remplacement de 127.0.0.1 par l'IP réelle du nœud maître dans ~/.kube/config
+- name: Remplacement de 127.0.0.1 par la VIP HA de l'API Kubernetes dans ~/.kube/config
   ansible.builtin.replace:
     path: "{{ lookup('env', 'HOME') }}/.kube/config"
     regexp: 'https://127\.0\.0\.1:6443'
-    replace: "https://{{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}:6443"
+    replace: "https://{{ k3s_api_vip }}:6443"
   delegate_to: localhost
   become: false
   run_once: true
@@ -243,7 +346,7 @@
         --namespace kube-system
         --kubeconfig {{ lookup('env', 'HOME') }}/.kube/config
         --set kubeProxyReplacement=true
-        --set k8sServiceHost={{ hostvars[groups['k3s_cluster'][0]]['ansible_host'] }}
+        --set k8sServiceHost={{ k3s_api_vip }}
         --set k8sServicePort=6443
         --set securityContext.privileged=true
         --set cgroup.autoMount.enabled=false

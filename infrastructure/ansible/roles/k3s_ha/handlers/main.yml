@@ -1,0 +1,14 @@
+---
+- name: Redémarrage de Keepalived
+  ansible.builtin.systemd:
+    name: keepalived
+    state: restarted
+    daemon_reload: true
+    enabled: true
+
+- name: Redémarrage contrôlé de K3s
+  throttle: 1
+  ansible.builtin.systemd:
+    name: k3s
+    state: restarted
+    daemon_reload: true

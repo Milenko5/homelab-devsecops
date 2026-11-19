@@ -52,3 +52,19 @@ parameters:
   linstor.csi.linbit.com/storagePool: pool1
   linstor.csi.linbit.com/placementCount: "3"
   csi.storage.k8s.io/fstype: ext4
+---
+# 4. StorageClass Locale sans réplication DRBD (placementCount: 1) :
+#    Recommandée pour les bases de données gérant déjà leur propre réplication HA
+#    (ex: HashiCorp Vault Raft HA, CloudNativePG, Redis Sentinel) afin d'éviter l'amplification 3x3=9x
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: piraeus-storage-local
+provisioner: linstor.csi.linbit.com
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+parameters:
+  linstor.csi.linbit.com/storagePool: pool1
+  linstor.csi.linbit.com/placementCount: "1"
+  csi.storage.k8s.io/fstype: ext4
