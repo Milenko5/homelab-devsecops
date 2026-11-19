@@ -1,0 +1,35 @@
+---
+# Politique Zero-Trust d'Admission (ADR-0007) :
+# Exige que toute image déployée dans le namespace 'demo-app' ait été signée sans clé (Keyless OIDC)
+# par le workflow officiel GitHub Actions (supply-chain.yml) via Sigstore Fulcio & Rekor
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-signed-images-homelab
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: verify-cosign-keyless-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - demo-app
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/milenko5/homelab-devsecops/*"
+          mutateDigest: true
+          verifyDigest: true
+          required: true
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subjectRegExp: "^https://github\\.com/[Mm]ilenko5/homelab-devsecops/\\.github/workflows/supply-chain\\.yml@refs/heads/main$"
+                    rekor:
+                      url: https://rekor.sigstore.dev

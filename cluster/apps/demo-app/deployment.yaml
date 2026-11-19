@@ -1,0 +1,133 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: demo-app
+  annotations:
+    checkov.io/skip1: "CKV_K8S_14=Le tag est muté automatiquement en digest @sha256 immuable par la politique Kyverno verifyImages à l'admission"
+    checkov.io/skip2: "CKV_K8S_43=Le digest @sha256 est résolu et vérifié cryptographiquement par Kyverno (mutateDigest: true) à l'admission"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: demo-app
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: demo-app
+          image: ghcr.io/milenko5/homelab-devsecops/demo-app:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          # Monté en tant que fichiers en lecture seule (/etc/secrets) plutôt qu'en variables d'environnement (Checkov CKV_K8S_35)
+          volumeMounts:
+            - name: db-credentials
+              mountPath: /etc/secrets
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: db-credentials
+          secret:
+            secretName: demo-app-db-credentials
+---
+# Micro-segmentation réseau Zero-Trust Cilium (Checkov CKV2_K8S_6) :
+# Autorise uniquement le trafic HTTP entrant depuis le contrôleur Ingress Traefik et bloque tout trafic sortant
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: demo-app-netpol
+  namespace: demo-app
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: demo-app
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app
+  namespace: demo-app
+spec:
+  selector:
+    app.kubernetes.io/name: demo-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-app-ingress
+  namespace: demo-app
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: demo.lab.sysdev.ca
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-app
+                port:
+                  number: 80
