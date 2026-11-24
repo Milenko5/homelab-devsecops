@@ -1,0 +1,184 @@
+---
+# ServiceAccount dédié aux snapshots Raft de Vault (Authentification Kubernetes Auth sans jeton statique)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault-snapshot
+  namespace: vault
+---
+# Synchronisation des clés S3 Cloudflare R2 depuis Vault via External Secrets Operator
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: r2-backup-credentials
+  namespace: vault
+spec:
+  refreshInterval: 1h0m0s
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: r2-backup-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: access_key_id
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: access_key_id
+    - secretKey: secret_access_key
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: secret_access_key
+    - secretKey: endpoint_url
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: endpoint_url
+    - secretKey: bucket_name
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: bucket_name
+---
+# CronJob quotidien (03h30 UTC) : Capture le snapshot chiffré Vault Raft (chiffré nativement par la Master Key Shamir)
+# en RAM (tmpfs) puis l'envoie hors cluster vers Cloudflare R2 (rétention 14 jours)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-raft-backup
+  namespace: vault
+  annotations:
+    checkov.io/skip1: "CKV_K8S_43=Images officielles versionnées (curlimages/curl:8.12.1 et amazon/aws-cli:2.24.14) utilisées pour le CronJob de sauvegarde"
+    checkov.io/skip2: "CKV_K8S_38=Jeton JWT du ServiceAccount vault-snapshot requis pour Vault Kubernetes Auth (zéro jeton statique)"
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: vault-raft-backup
+        spec:
+          serviceAccountName: vault-snapshot
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: vault-snapshot
+              image: curlimages/curl:8.12.1
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  LOGIN_RESP=$(curl -fsS -X POST \
+                    -d "{\"jwt\":\"${JWT}\",\"role\":\"vault-snapshot\"}" \
+                    http://vault.vault.svc.cluster.local:8200/v1/auth/kubernetes/login)
+                  VAULT_TOKEN=$(echo "${LOGIN_RESP}" | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
+                  if [ -z "${VAULT_TOKEN}" ]; then
+                    echo "ERREUR: Échec authentification Kubernetes Auth Vault" >&2
+                    exit 1
+                  fi
+                  SNAPSHOT_FILE="/backup/vault-raft-$(date -u +%Y%m%d-%H%M%S).snap"
+                  curl -fsS -H "X-Vault-Token: ${VAULT_TOKEN}" \
+                    http://vault.vault.svc.cluster.local:8200/v1/sys/storage/raft/snapshot \
+                    -o "${SNAPSHOT_FILE}"
+                  ls -lh "${SNAPSHOT_FILE}"
+              securityContext:
+                allowPrivilegeEscalation: false
+                privileged: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+                runAsGroup: 10001
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: backup-tmp
+                  mountPath: /backup
+          containers:
+            - name: upload-to-r2
+              image: amazon/aws-cli:2.24.14
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  export HOME=/tmp/aws
+                  export AWS_ACCESS_KEY_ID="$(cat /etc/r2-secrets/access_key_id)"
+                  export AWS_SECRET_ACCESS_KEY="$(cat /etc/r2-secrets/secret_access_key)"
+                  export AWS_DEFAULT_REGION="auto"
+                  ENDPOINT="$(cat /etc/r2-secrets/endpoint_url)"
+                  BUCKET="$(cat /etc/r2-secrets/bucket_name)"
+                  for f in /backup/vault-raft-*.snap; do
+                    aws --endpoint-url "${ENDPOINT}" s3 cp "${f}" "s3://${BUCKET}/vault/$(basename "${f}")"
+                  done
+                  echo "✅ Snapshot Vault Raft archivé sur Cloudflare R2 (${BUCKET}/vault/)."
+              securityContext:
+                allowPrivilegeEscalation: false
+                privileged: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+                runAsGroup: 10001
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+              volumeMounts:
+                - name: backup-tmp
+                  mountPath: /backup
+                  readOnly: true
+                - name: r2-creds
+                  mountPath: /etc/r2-secrets
+                  readOnly: true
+                - name: aws-home
+                  mountPath: /tmp/aws
+          volumes:
+            - name: backup-tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 256Mi
+            - name: aws-home
+              emptyDir:
+                medium: Memory
+                sizeLimit: 16Mi
+            - name: r2-creds
+              secret:
+                secretName: r2-backup-credentials
+---
+# Micro-segmentation du pod de sauvegarde : bloque tout trafic entrant (Checkov CKV2_K8S_6)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-raft-backup-netpol
+  namespace: vault
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault-raft-backup
+  policyTypes:
+    - Ingress
+  ingress: []

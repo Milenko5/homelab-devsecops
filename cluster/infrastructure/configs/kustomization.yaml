@@ -9,5 +9,8 @@ resources:
   - ingress-routes.yaml
   - vault-secret-store.yaml
   - vault-netpol.yaml
+  - vault-backup-cronjob.yaml
   - authentik-middleware.yaml
+  - prometheus-rules.yaml
+  - velero-schedules.yaml
   - kyverno-policies.yaml

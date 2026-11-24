@@ -95,6 +95,18 @@ variable "domaine_principal" {
   default     = "sysdev.ca"
 }
 
+variable "r2_enabled" {
+  description = "Active la création déclarative du bucket Cloudflare R2 via OpenTofu (requiert Workers R2 Storage:Edit)"
+  type        = bool
+  default     = false
+}
+
+variable "r2_backup_bucket_name" {
+  description = "Nom du bucket Cloudflare R2 hébergeant les sauvegardes chiffrées (etcd + Vault Raft)"
+  type        = string
+  default     = "homelab-devsecops-backups"
+}
+
 variable "sous_domaine_lab" {
   description = "Sous-domaine dédié au cluster Kubernetes Homelab"
   type        = string

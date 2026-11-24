@@ -1,0 +1,68 @@
+---
+# Règles d'alerting ciblées pour le Homelab DevSecOps (envoyées par Email SMTP via Alertmanager)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: homelab-devsecops-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: homelab.infrastructure
+      rules:
+        - alert: HomelabNodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Nœud Kubernetes {{ $labels.node }} hors ligne (NotReady)"
+            description: "Le nœud {{ $labels.node }} est NotReady depuis plus de 2 minutes."
+
+        - alert: HomelabDiskSpaceWarning
+          expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Espace disque faible sur {{ $labels.instance }} ({{ $labels.mountpoint }})"
+            description: "Moins de 15 % d'espace disque disponible sur {{ $labels.mountpoint }}."
+
+        - alert: HomelabPodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} en CrashLoopBackOff"
+            description: "Le conteneur {{ $labels.container }} a redémarré plus de 3 fois en 15 minutes."
+
+    - name: homelab.security
+      rules:
+        - alert: HomelabVaultPodNotReady
+          expr: kube_pod_status_ready{namespace="vault",condition="true",pod=~"vault-[0-9]+"} == 0
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod HashiCorp Vault {{ $labels.pod }} non prêt ou scellé"
+            description: "Le pod {{ $labels.pod }} n'est pas Ready depuis 3 minutes (vérifiez le statut Sealed / Raft)."
+
+        - alert: HomelabCertExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) < (15 * 86400)
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificat TLS {{ $labels.namespace }}/{{ $labels.name }} expire bientôt"
+            description: "Le certificat expire dans moins de 15 jours (vérifiez Cert-Manager DNS-01 Cloudflare)."
+
+        - alert: HomelabCertNotReady
+          expr: certmanager_certificate_ready_status{condition="True"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Certificat TLS {{ $labels.namespace }}/{{ $labels.name }} en échec"
+            description: "Le certificat n'est pas en état Ready depuis plus de 10 minutes."
