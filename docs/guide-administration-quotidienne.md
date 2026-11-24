@@ -502,9 +502,42 @@ spec:
       storage: 5Gi
 ```
 
-### 7.2 Agrandir un volume existant (Online Volume Expansion)
+### 7.2 Agrandir un volume existant (Online Volume Expansion) & Choix de `StorageClass`
 
-Comme `allowVolumeExpansion: true` est activé sur `piraeus-storage-replicated`, il suffit d'augmenter la valeur `spec.resources.requests.storage` (ex. `5Gi` $\rightarrow$ `10Gi`) dans le manifeste Git du PVC et de fusionner la PR : LINSTOR et DRBD 9 agrandissent le volume et le système de fichiers `ext4` à chaud.
+- **`piraeus-storage-replicated` (`placementCount: 3`, par défaut) :** à utiliser pour toutes les applications stateful mono-instance (Grafana, Prometheus, Authentik PostgreSQL, applications personnelles).
+- **`piraeus-storage-local` (`placementCount: 1`) :** à utiliser pour les bases de données qui gèrent déjà leur propre réplication HA (ex. Vault Raft, CloudNativePG, Redis Sentinel) afin d'éviter l'amplification d'écriture 3×3 = 9×.
+- Comme `allowVolumeExpansion: true` est activé sur les deux classes, il suffit d'augmenter `spec.resources.requests.storage` (ex. `5Gi` -> `10Gi`) dans le manifeste Git du PVC et de fusionner la PR : LINSTOR et DRBD 9 agrandissent le volume et le système de fichiers `ext4` à chaud.
+
+### 7.3 Sauvegardes chiffrées hors cluster & Plan de Reprise d'Activité (Cloudflare R2)
+
+La réplication DRBD 9 protège contre une panne matérielle, mais **pas** contre une suppression accidentelle ou une corruption logique. Vos sauvegardes automatisées vers le bucket Cloudflare R2 (`homelab-devsecops-backups`, rétention glissante 14 jours) couvrent 3 niveaux :
+
+| Heure (UTC) | Composant | Dossier R2 | Déclenchement manuel de test |
+| :--- | :--- | :--- | :--- |
+| **`03h00`** | **K3s `etcd` (chiffré au repos)** | `etcd/` | `ssh -i ~/.ssh/id_ed25519_homelab ansible@172.16.17.221 "sudo k3s etcd-snapshot save --name manual-$(date +%F)"` |
+| **`03h30`** | **HashiCorp Vault Raft (chiffré Shamir)** | `vault/` | `kubectl create job -n vault --from=cronjob/vault-raft-backup manual-vault-$(date +%s)` |
+| **`04h00`** | **Velero + Kopia (PVC `authentik`, `monitoring`, `demo-app`)** | `velero/` | `kubectl apply -f -` d'un objet `Backup` (`velero.io/v1`) dans le namespace `velero` |
+
+**Restaurer un namespace ou un PVC depuis Velero (PRA) :**
+```bash
+# 1. Lister les sauvegardes disponibles dans Cloudflare R2
+kubectl get backups -n velero
+
+# 2. Restaurer un backup précis (ex. un namespace applicatif)
+kubectl apply -f - << 'EOF'
+apiVersion: velero.io/v1
+kind: Restore
+metadata:
+  name: restore-authentik-1
+  namespace: velero
+spec:
+  backupName: <NOM_DU_BACKUP>
+  includedNamespaces:
+    - authentik
+  restorePVs: true
+EOF
+kubectl get restores -n velero -w
+```
 
 ---
 
@@ -528,4 +561,4 @@ Comme `allowVolumeExpansion: true` est activé sur `piraeus-storage-replicated`,
 | **Un Pod est `CrashLoopBackOff` / `OOMKilled`** | `kubectl logs <pod> -n <ns> --previous` | Si `OOMKilled` (`Exit Code 137`), augmenter `resources.limits.memory` dans le `Deployment`. |
 | **Un site `*.lab.sysdev.ca` ne répond pas** | `dig +short mon-app.lab.sysdev.ca @172.16.16.5` et `kubectl get ingress -A` | Vérifier que le DNS renvoie `172.16.17.20`, que les pods sont `Ready` et que la `NetworkPolicy` autorise le namespace `traefik`. |
 | **Un `ExternalSecret` est en erreur** | `kubectl describe externalsecret <nom> -n <ns>` | Vérifier que Vault n'est pas scellé (`kubectl exec -n vault vault-0 -- vault status`) et que le chemin existe bien sous `secret/` dans Vault. |
-| **Un `PVC` reste en `Pending`** | `kubectl describe pvc <nom> -n <ns>` et `linstor error-reports list` | Vérifier que `/dev/loop0..63` et `/dev/drbd1000..1063` existent sur les 3 nœuds et que `cat /sys/module/drbd/parameters/usermode_helper` retourne `disabled` sur les 3 hôtes physiques. |
+| **Un `PVC` reste en `Pending` (`Not enough available nodes`)** | `kubectl exec -n piraeus-datastore deploy/linstor-controller -- linstor node list` | Si un satellite (`k3s-srv-0X`) est `OFFLINE`, redémarrez son pod (`kubectl delete pod -n piraeus-datastore linstor-satellite.k3s-srv-0X-*`). Vérifiez aussi `/dev/loop*`, `/dev/drbd*` et `usermode_helper=disabled`. |
