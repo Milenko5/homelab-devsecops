@@ -73,7 +73,7 @@ spec:
           initContainers:
             - name: vault-snapshot
               image: curlimages/curl:8.12.1
-              imagePullPolicy: IfNotPresent
+              imagePullPolicy: Always
               command:
                 - /bin/sh
                 - -ec
@@ -115,7 +115,7 @@ spec:
           containers:
             - name: upload-to-r2
               image: amazon/aws-cli:2.24.14
-              imagePullPolicy: IfNotPresent
+              imagePullPolicy: Always
               command:
                 - /bin/sh
                 - -ec
