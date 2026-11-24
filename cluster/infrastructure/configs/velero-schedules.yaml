@@ -1,0 +1,19 @@
+---
+# Sauvegarde quotidienne automatisée (04h00 UTC) des namespaces stateful via Velero + Kopia vers Cloudflare R2
+# (Complète les snapshots natifs etcd à 03h00 et Vault Raft à 03h30 — rétention glissante 14 jours)
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: homelab-stateful-daily
+  namespace: velero
+spec:
+  schedule: "0 4 * * *"
+  useOwnerReferencesInBackup: false
+  template:
+    includedNamespaces:
+      - authentik
+      - monitoring
+      - demo-app
+    defaultVolumesToFsBackup: true
+    storageLocation: default
+    ttl: 336h0m0s

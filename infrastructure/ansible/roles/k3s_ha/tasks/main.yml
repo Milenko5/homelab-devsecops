@@ -149,6 +149,17 @@
       cluster-init: true
       write-kubeconfig-mode: "0600"
       secrets-encryption: true
+      etcd-snapshot-schedule-cron: "0 3 * * *"
+      etcd-snapshot-retention: 14
+      {% if lookup('env', 'R2_ENDPOINT_HOST') | length > 0 %}
+      etcd-s3: true
+      etcd-s3-endpoint: "{{ lookup('env', 'R2_ENDPOINT_HOST') }}"
+      etcd-s3-bucket: "{{ lookup('env', 'R2_BUCKET_NAME') | default('homelab-devsecops-backups', true) }}"
+      etcd-s3-folder: "etcd"
+      etcd-s3-region: "auto"
+      etcd-s3-access-key: "{{ lookup('env', 'R2_ACCESS_KEY_ID') }}"
+      etcd-s3-secret-key: "{{ lookup('env', 'R2_SECRET_ACCESS_KEY') }}"
+      {% endif %}
       node-ip: "{{ ansible_host }}"
       flannel-backend: "none"
       disable-network-policy: true
@@ -219,6 +230,17 @@
         - traefik
       write-kubeconfig-mode: "0600"
       secrets-encryption: true
+      etcd-snapshot-schedule-cron: "0 3 * * *"
+      etcd-snapshot-retention: 14
+      {% if lookup('env', 'R2_ENDPOINT_HOST') | length > 0 %}
+      etcd-s3: true
+      etcd-s3-endpoint: "{{ lookup('env', 'R2_ENDPOINT_HOST') }}"
+      etcd-s3-bucket: "{{ lookup('env', 'R2_BUCKET_NAME') | default('homelab-devsecops-backups', true) }}"
+      etcd-s3-folder: "etcd"
+      etcd-s3-region: "auto"
+      etcd-s3-access-key: "{{ lookup('env', 'R2_ACCESS_KEY_ID') }}"
+      etcd-s3-secret-key: "{{ lookup('env', 'R2_SECRET_ACCESS_KEY') }}"
+      {% endif %}
       tls-san:
         - "{{ k3s_api_vip }}"
       {% for host in groups['k3s_cluster'] %}

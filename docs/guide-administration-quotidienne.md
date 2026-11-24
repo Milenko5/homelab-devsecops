@@ -38,8 +38,10 @@ kubectl get pods -n authentik
 kubectl get clusterissuer,certificate -A
 kubectl get clustersecretstore,externalsecret -A
 
-# 7. Santé des politiques d'admission Kyverno v1.20 (CEL)
+# 7. Santé des politiques d'admission Kyverno v1.20 (CEL) et des sauvegardes Velero / Alertmanager
 kubectl get validatingpolicy,imagevalidatingpolicy
+kubectl get backupstoragelocation,schedule,backup -n velero
+kubectl get prometheusrule -n monitoring
 ```
 
 ---

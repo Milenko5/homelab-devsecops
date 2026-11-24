@@ -74,4 +74,19 @@ elif ! kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" vault kv
       bootstrap_password="$(openssl rand -base64 18)"
 fi
 
-echo "✅ HashiCorp Vault est configuré avec Kubernetes Auth et prêt pour External Secrets Operator (ESO) !"
+echo "9. Création de la politique & du rôle Kubernetes Auth 'vault-snapshot' (sauvegarde Raft vers Cloudflare R2)..."
+kubectl exec -i -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
+  vault policy write vault-snapshot-reader - << 'EOF'
+path "sys/storage/raft/snapshot" {
+  capabilities = ["read"]
+}
+EOF
+
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="${ROOT_TOKEN}" \
+  vault write auth/kubernetes/role/vault-snapshot \
+    bound_service_account_names=vault-snapshot \
+    bound_service_account_namespaces=vault \
+    policies=vault-snapshot-reader \
+    ttl=15m
+
+echo "✅ HashiCorp Vault est configuré avec Kubernetes Auth (ESO + Snapshots Raft) !"
