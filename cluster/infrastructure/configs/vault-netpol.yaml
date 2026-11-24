@@ -28,6 +28,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: vault
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vault-raft-backup
       ports:
         - protocol: TCP
           port: 8200

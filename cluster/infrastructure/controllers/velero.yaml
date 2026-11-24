@@ -1,0 +1,143 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: velero
+---
+# 1. Identifiants S3 Cloudflare R2 pour Velero (format INI 'cloud' généré depuis Vault via ESO)
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: velero-r2-credentials
+  namespace: velero
+spec:
+  refreshInterval: 1h0m0s
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: velero-r2-credentials
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        cloud: |
+          [default]
+          aws_access_key_id={{ .access_key_id }}
+          aws_secret_access_key={{ .secret_access_key }}
+  data:
+    - secretKey: access_key_id
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: access_key_id
+    - secretKey: secret_access_key
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: secret_access_key
+---
+# 2. Endpoint & Bucket R2 synchronisés dans flux-system pour injection dynamique dans le HelmRelease (valuesFrom)
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: velero-r2-config
+  namespace: flux-system
+spec:
+  refreshInterval: 1h0m0s
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: velero-r2-config
+    creationPolicy: Owner
+  data:
+    - secretKey: endpoint_url
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: endpoint_url
+    - secretKey: bucket_name
+      remoteRef:
+        key: backup/cloudflare-r2
+        property: bucket_name
+---
+# 3. Déploiement de Velero avec moteur Kopia (chiffrement client-side, déduplication, compression -> Cloudflare R2)
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: velero
+  namespace: flux-system
+spec:
+  interval: 30m0s
+  timeout: 10m0s
+  targetNamespace: velero
+  releaseName: velero
+  dependsOn:
+    - name: external-secrets
+  chart:
+    spec:
+      chart: velero
+      version: ">= 8.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: vmware-tanzu
+        namespace: flux-system
+      interval: 12h0m0s
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  valuesFrom:
+    - kind: Secret
+      name: velero-r2-config
+      valuesKey: endpoint_url
+      targetPath: configuration.backupStorageLocation[0].config.s3Url
+    - kind: Secret
+      name: velero-r2-config
+      valuesKey: bucket_name
+      targetPath: configuration.backupStorageLocation[0].bucket
+  values:
+    credentials:
+      useSecret: true
+      existingSecret: velero-r2-credentials
+    # Déploie le node-agent DaemonSet pour les sauvegardes système de fichiers Kopia (indépendant CSI DRBD 9)
+    deployNodeAgent: true
+    nodeAgent:
+      podVolumePath: /var/lib/kubelet/pods
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    initContainers:
+      - name: velero-plugin-for-aws
+        image: velero/velero-plugin-for-aws:v1.11.0
+        volumeMounts:
+          - mountPath: /target
+            name: plugins
+    configuration:
+      uploaderType: kopia
+      defaultVolumesToFsBackup: true
+      backupStorageLocation:
+        - name: default
+          provider: aws
+          prefix: velero
+          default: true
+          config:
+            region: auto
+            s3ForcePathStyle: true
+            # Requis pour compatibilité S3 Cloudflare R2 avec AWS SDK v2
+            checksumAlgorithm: ""
+    snapshotsEnabled: false
+    upgradeCRDs: false

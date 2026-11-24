@@ -11,3 +11,4 @@ resources:
   - kyverno.yaml
   - kube-prometheus-stack.yaml
   - authentik.yaml
+  - velero.yaml

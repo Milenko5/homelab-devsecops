@@ -25,7 +25,9 @@ Bienvenue sur le dépôt de mon infrastructure "Homelab" orientée DevSecOps. L'
     
 - **Stockage Distribué :** Piraeus Operator v2 (LINSTOR / DRBD 9 en espace noyau — `piraeus-storage-replicated` 3× et `piraeus-storage-local` 1×).
     
-- **Observabilité & Métriques :** `kube-prometheus-stack` (Prometheus + Grafana persistés sur volumes répliqués DRBD 9 et exposés sur `https://grafana.lab.sysdev.ca`).
+- **Observabilité & Alerting :** `kube-prometheus-stack` (Prometheus + Grafana persistés sur DRBD 9 à `https://grafana.lab.sysdev.ca` + **Alertmanager SMTP** configuré via Vault/ESO + `PrometheusRule` dédiées).
+    
+- **Sauvegardes & PRA (Cloudflare R2 S3) :** Stratégie 3 niveaux chiffrée hors cluster (rétention 14 jours) — **K3s `etcd-s3`** (`03h00`), **CronJob Vault Raft** (`03h30`, Kubernetes Auth) et **Velero + Kopia** (`04h00`, sauvegarde chiffrée des PVC stateful `authentik`, `monitoring`, `demo-app`).
     
 - **Automatisation (IaC) :** Terraform/OpenTofu (avec chiffrement natif du `.tfstate` en AES-GCM) & Ansible.
     
