@@ -251,9 +251,9 @@ ansible-playbook -i infrastructure/ansible/inventory/baremetal.yml infrastructur
 ### Étape 1 : Provisionnement des conteneurs K3s, des Rulesets GitHub et du DNS Split-Horizon (OpenTofu)
 
 OpenTofu provisionne simultanément :
-1. Les profils et les 3 conteneurs système Ubuntu 26.04 LTS (12 Go RAM / 80 Go disque) sur Incus 7.5 (en conservant le certificat client mTLS de manière persistante dans `~/.ssh/incus-client` pour survivre aux reconstructions du DevContainer après consommation des jetons d'enrôlement initiaux à usage unique).
-2. Le dépôt GitHub et ses *Rulesets* Zero-Trust (`github.tf`).
-3. Les enregistrements **DNS CAA (`letsencrypt.org`)** sur la zone Cloudflare `sysdev.ca` et les réécritures **Split-Horizon DNS (`*.lab.sysdev.ca` $\rightarrow$ `172.16.17.20`)** sur les 2 serveurs AdGuard Home (`dns.tf`).
+1. Les profils (incluant les modules noyau `drbd` et `wireguard`) et les 3 conteneurs système Ubuntu 26.04 LTS (12 Go RAM / 80 Go disque) sur Incus 7.5 (en conservant le certificat client mTLS dans `~/.ssh/incus-client` et en générant `inventory/hosts.yml` avec la VIP HA API `k3s_api_vip = 172.16.17.220`).
+2. Le dépôt GitHub, ses *Rulesets* Zero-Trust et permissions Actions (`github.tf`).
+3. Les enregistrements **DNS CAA (`letsencrypt.org`)** sur Cloudflare `sysdev.ca`, les réécritures **Split-Horizon DNS (`*.lab.sysdev.ca` -> `172.16.17.20`)** sur les 2 serveurs AdGuard Home (`dns.tf`), et optionnellement le bucket de sauvegardes **Cloudflare R2** (`r2.tf` via `TF_VAR_r2_enabled=true`).
 
 ```bash
 # Vérification de l'accès à l'API des 3 hôtes Incus 7.5
@@ -271,13 +271,14 @@ dig +short traefik.lab.sysdev.ca @172.16.16.5
 dig +short traefik.lab.sysdev.ca @172.16.16.6
 ```
 
-### Étape 2 : Amorçage automatisé du quorum K3s HA et du réseau Cilium eBPF / L2 (Ansible)
+### Étape 2 : Amorçage automatisé du quorum K3s HA, Keepalived VIP & Cilium WireGuard (Ansible)
 
 Le playbook `playbook.yml` exécute séquentiellement les rôles `os_prep` et `k3s_ha` :
-1. Vérifie que le module noyau **DRBD 9** de l'hôte est bien exposé dans chaque conteneur (`/proc/drbd`), monte `/sys/fs/bpf` et applique les paramètres `sysctl`.
-2. Initialise le cluster `etcd` sur `k3s-srv-01` (avec le drop-in systemd `10-incus-lxc.conf`), joint séquentiellement `k3s-srv-02` et `k3s-srv-03`.
-3. Rapatrie automatiquement le fichier `~/.kube/config` dans le DevContainer et en conserve une copie persistante dans `~/.ssh/homelab.kubeconfig` (restaurée automatiquement au démarrage du DevContainer via `postStartCommand`).
-4. Déploie **Cilium 1.20.4** via Helm en mode remplacement strict de `kube-proxy` (`kubeProxyReplacement=true`, `sysctlfix.enabled=false`, `l2announcements.enabled=true`) et applique le pool d'adresses IP L2 (`cluster/infrastructure/configs/cilium-l2.yml`).
+1. Vérifie que le module noyau **DRBD 9** de l'hôte est exposé dans chaque conteneur (`/proc/drbd`), pré-crée `/dev/loop0..63` et `/dev/drbd1000..1063`, monte `/sys/fs/bpf` et applique les paramètres `sysctl`.
+2. Déploie **Keepalived (VRRP Unicast)** sur `eth0` pour exposer la VIP HA **`172.16.17.220:6443`** devant l'API Kubernetes.
+3. Initialise le cluster `etcd` sur `k3s-srv-01` avec **`secrets-encryption: true`** (chiffrement AES-CBC au repos synchronisé sur les 3 nœuds), **`write-kubeconfig-mode: "0600"`**, `tls-san` complet (`172.16.17.220` + 3 nœuds), et **snapshots `etcd` quotidiens vers Cloudflare R2** (`03h00 UTC`, si les variables `R2_*` sont définies dans `.env`).
+4. Rapatrie automatiquement `~/.kube/config` (pointant sur `https://172.16.17.220:6443`) et le sauvegarde dans `~/.ssh/homelab.kubeconfig`.
+5. Déploie **Cilium 1.20.4** via Helm sur `k8sServiceHost=172.16.17.220` avec remplacement de `kube-proxy`, **chiffrement transparent WireGuard** (`encryption.enabled=true`, `nodeEncryption=true`), **L2 Announcements**, **Hubble UI** et applique `cilium-l2.yml`.
 
 ```bash
 cd infrastructure/ansible
@@ -285,16 +286,18 @@ ansible-playbook playbook.yml
 cd ../..
 ```
 
-### Étape 3 : Vérification de la santé du cluster K3s HA, d'eBPF et du LoadBalancer L2
+### Étape 3 : Vérification de la santé du cluster K3s HA, WireGuard et du LoadBalancer L2
 
 ```bash
-# 1. Vérifier que les 3 nœuds control-plane/etcd sont à l'état Ready
+# 1. Vérifier que kubectl passe par la VIP HA 172.16.17.220:6443 et que les 3 nœuds sont Ready
+kubectl cluster-info
 kubectl get nodes -o wide
 
-# 2. Vérifier le remplacement eBPF de kube-proxy et la santé de Cilium (doit retourner OK)
+# 2. Vérifier Cilium eBPF et le chiffrement transparent WireGuard (2 peers attendus)
 kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+kubectl -n kube-system exec ds/cilium -- cilium-dbg encrypt status
 
-# 3. Vérifier que le pool d'adresses IP L2 (172.16.17.20 à .220, soit 201 IPs) est actif
+# 3. Vérifier que le pool d'adresses IP L2 (172.16.17.20 à .219, excluant .220 réservée à Keepalived) est actif
 kubectl get ciliumloadbalancerippools,ciliuml2announcementpolicies -A
 ```
 ### Étape 4 : Amorçage GitOps Zero-Trust (FluxCD, SOPS/Age & Vérification GPG)
@@ -378,33 +381,53 @@ done
 # 3. Vérification du quorum Raft (1 leader + 2 followers)
 kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault operator raft list-peers
 
-# 4. Configuration déclarative du moteur KV v2, de la politique eso-reader et de Kubernetes Auth
+# 4. Configuration déclarative du moteur KV v2, Kubernetes Auth (ESO + vault-snapshot) et secrets initiaux (demo-app, Grafana, Authentik)
 chmod +x scripts/configurerVaultKubernetesAuth.sh
 ./scripts/configurerVaultKubernetesAuth.sh
 
-# 5. Vérification du ClusterSecretStore et de la synchronisation ExternalSecret dans demo-app et monitoring
+# 5. Injection des identifiants SMTP (Alertmanager) et S3 Cloudflare R2 (Velero & Vault Raft Backup) dans Vault
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" \
+  vault kv put secret/monitoring/alertmanager \
+    smtp_smarthost="smtp.votre-fournisseur.com:587" \
+    smtp_from="alertes@sysdev.ca" \
+    smtp_username="votre-utilisateur-smtp" \
+    smtp_password="votre-mot-de-passe-smtp" \
+    alert_to="destinataire@exemple.com"
+
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" \
+  vault kv put secret/backup/cloudflare-r2 \
+    access_key_id="<R2_ACCESS_KEY_ID>" \
+    secret_access_key="<R2_SECRET_ACCESS_KEY>" \
+    endpoint_url="https://<ACCOUNT_ID>.r2.cloudflarestorage.com" \
+    bucket_name="homelab-devsecops-backups"
+
+# 6. Vérification du ClusterSecretStore et de tous les ExternalSecrets (demo-app, monitoring, authentik, velero)
 kubectl get clustersecretstore vault-backend
-kubectl get externalsecret,secret -n demo-app
-kubectl get externalsecret,secret -n monitoring
+kubectl get externalsecret -A
 ```
 
-### Étape 7 : Vérification de la Supply Chain Zero-Trust (Kyverno CEL) et de l'Observabilité (Prometheus & Grafana)
+### Étape 7 : Vérification de la Supply Chain (Kyverno CEL), Authentik SSO, Alertmanager & Sauvegardes R2
 
 ```bash
-# 1. Vérifier que la politique CEL ImageValidatingPolicy de Kyverno v1.20 est active
-kubectl get imagevalidatingpolicy
+# 1. Vérifier que les politiques CEL Kyverno v1.20 (ValidatingPolicy + ImageValidatingPolicy) sont actives
+kubectl get validatingpolicy,imagevalidatingpolicy
 
 # 2. Tester en direct le rejet par Kyverno d'une image non signée par Cosign OIDC (doit être refusé)
 kubectl run test-intrusion -n demo-app --image=ghcr.io/milenko5/homelab-devsecops/image-non-signee:latest --restart=Never --dry-run=server
 
-# 3. Vérifier l'application de démonstration signée (https://demo.lab.sysdev.ca) et la pile Prometheus/Grafana (https://grafana.lab.sysdev.ca)
-kubectl get pods,svc,ingress -n demo-app
-kubectl get pods,pvc,ingress -n monitoring
+# 3. Vérifier Authentik SSO (https://auth.lab.sysdev.ca) et la redirection 302 sur Traefik & Hubble
+kubectl get pods -n authentik
+curl -Ik https://traefik.lab.sysdev.ca/dashboard/ | grep -i -E "^HTTP|^location"
+curl -Ik https://hubble.lab.sysdev.ca/ | grep -i -E "^HTTP|^location"
 
-# 4. Récupérer le mot de passe administrateur Grafana généré dans HashiCorp Vault
+# 4. Vérifier demo-app, Prometheus, Grafana, Alertmanager et les sauvegardes Velero / Vault Raft (Cloudflare R2)
+kubectl get pods,svc,ingress -n demo-app
+kubectl get pods,pvc,prometheusrule -n monitoring
+kubectl get backupstoragelocation,schedule -n velero
+kubectl get cronjob -n vault
+
+# 5. Récupérer les mots de passe initiaux (Grafana & Authentik akadmin) depuis Vault
 ROOT_TOKEN=$(jq -r '.root_token' ~/.ssh/vault-init.json)
 kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault kv get secret/monitoring/grafana
+kubectl exec -n vault vault-0 -- env VAULT_TOKEN="$ROOT_TOKEN" vault kv get -field=bootstrap_password secret/authentik/config
 ```
-
-
-
